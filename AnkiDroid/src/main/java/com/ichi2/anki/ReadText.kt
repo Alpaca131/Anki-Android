@@ -23,8 +23,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.view.WindowManager.BadTokenException
 import androidx.annotation.VisibleForTesting
-import com.afollestad.materialdialogs.MaterialDialog
-import com.afollestad.materialdialogs.list.listItems
+import androidx.appcompat.app.AlertDialog
 import com.ichi2.anki.UIUtils.showThemedToast
 import com.ichi2.anki.snackbar.showSnackbar
 import com.ichi2.annotations.NeedsTest
@@ -33,6 +32,9 @@ import com.ichi2.libanki.Sound.SoundSide
 import com.ichi2.libanki.TTSTag
 import com.ichi2.utils.HandlerUtils.postDelayedOnNewHandler
 import com.ichi2.utils.iconAttr
+import com.ichi2.utils.message
+import com.ichi2.utils.positiveButton
+import com.ichi2.utils.title
 import timber.log.Timber
 import java.lang.ref.WeakReference
 import java.util.*
@@ -59,7 +61,7 @@ object ReadText {
         val result = textToSpeech!!.setLanguage(LanguageUtils.localeFromStringIgnoringScriptAndExtensions(loc))
         if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
             showThemedToast(
-                flashCardViewer.get(),
+                flashCardViewer.get()!!,
                 flashCardViewer.get()!!.getString(R.string.no_tts_available_message) +
                     " (" + loc + ")",
                 false
@@ -97,7 +99,7 @@ object ReadText {
         mDid = did
         mOrd = ord
         val res = flashCardViewer.get()!!.resources
-        val dialog = MaterialDialog(flashCardViewer.get()!!)
+        val dialog = AlertDialog.Builder(flashCardViewer.get()!!)
         // Build the language list if it's empty
         if (availableTtsLocales.isEmpty()) {
             buildAvailableLanguages()
@@ -118,7 +120,7 @@ object ReadText {
                     )
                 }
             dialog.title(R.string.select_locale_title)
-                .listItems(items = localeMappings.map { it.second }) { _: MaterialDialog, index: Int, _: CharSequence ->
+                .setItems(localeMappings.map { it.second }.toTypedArray()) { _, index ->
                     val locale = localeMappings[index].first
                     Timber.d("ReadText.selectTts() user chose locale '%s'", locale)
                     MetaDB.storeLanguage(flashCardViewer.get()!!, mDid, mOrd, questionAnswer!!, locale)
@@ -133,7 +135,7 @@ object ReadText {
         showDialogAfterDelay(dialog, 500)
     }
 
-    internal fun showDialogAfterDelay(dialog: MaterialDialog, delayMillis: Int) {
+    internal fun showDialogAfterDelay(dialog: AlertDialog.Builder, delayMillis: Int) {
         postDelayedOnNewHandler({
             try {
                 dialog.show()
@@ -225,7 +227,7 @@ object ReadText {
             // (after notifying them first that no TTS voice was found for the locale
             // they originally requested)
             showThemedToast(
-                flashCardViewer.get(),
+                flashCardViewer.get()!!,
                 flashCardViewer.get()!!.getString(R.string.no_tts_available_message) +
                     " (" + originalLocaleCode + ")",
                 false

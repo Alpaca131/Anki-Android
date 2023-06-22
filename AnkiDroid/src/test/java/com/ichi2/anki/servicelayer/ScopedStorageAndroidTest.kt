@@ -102,7 +102,7 @@ class ScopedStorageAndroidTest {
         val depthThreeRootDirectory = sharedRootDirectory.createTransientDirectory("third").createTransientDirectory("third").createTransientDirectory("third")
         val templatePath = sharedRootDirectory.createTransientDirectory("final")
 
-        runTestWithTwoExternalDirectories(arrayOf(depthTwoRootDirectory, depthThreeRootDirectory, depthOneRootDirectory,)) {
+        runTestWithTwoExternalDirectories(arrayOf(depthTwoRootDirectory, depthThreeRootDirectory, depthOneRootDirectory)) {
             val best = ScopedStorageService.getBestDefaultRootDirectory(ApplicationProvider.getApplicationContext(), templatePath)
             assertThat("ambiguous, so should return first path", best.canonicalPath, equalTo(depthTwoRootDirectory.canonicalPath))
         }
@@ -122,7 +122,7 @@ class ScopedStorageAndroidTest {
      */
     private fun runTestWithTwoExternalDirectories(externalDirectories: Array<File>, test: (Array<File>) -> Unit) {
         mockkObject(CollectionHelper) {
-            every { CollectionHelper.getAppSpecificExternalDirectories(any()) } returns externalDirectories
+            every { CollectionHelper.getAppSpecificExternalDirectories(any()) } returns externalDirectories.toList()
             test(externalDirectories)
         }
     }

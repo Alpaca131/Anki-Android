@@ -34,9 +34,10 @@ import com.ichi2.anki.R
 import com.ichi2.anki.UIUtils
 import com.ichi2.anki.multimediacard.IMultimediaEditableNote
 import com.ichi2.anki.multimediacard.fields.*
-import com.ichi2.utils.CheckCameraPermission
+import com.ichi2.compat.CompatHelper.Companion.getSerializableCompat
 import com.ichi2.utils.KotlinCleanup
 import com.ichi2.utils.Permissions
+import com.ichi2.utils.Permissions.arePermissionsDefinedInAnkiDroidManifest
 import timber.log.Timber
 import java.io.File
 import java.text.DecimalFormat
@@ -96,24 +97,26 @@ class MultimediaEditFieldActivity : AnkiActivity(), OnRequestPermissionsResultCa
         finishWithoutAnimation()
     }
 
-    private fun performPermissionRequest(field: IField): Boolean {
+    private fun hasPerformedPermissionRequestForField(field: IField): Boolean {
         // Request permission to record if audio field
         if (field is AudioRecordingField && !Permissions.canRecordAudio(this)) {
             Timber.d("Requesting Audio Permissions")
             ActivityCompat.requestPermissions(
-                this, arrayOf(Manifest.permission.RECORD_AUDIO),
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
                 REQUEST_AUDIO_PERMISSION
             )
             return true
         }
 
         // Request permission to use the camera if image field
-        if (field is ImageField && CheckCameraPermission.manifestContainsPermission(this) &&
+        if (field is ImageField && this.arePermissionsDefinedInAnkiDroidManifest(Manifest.permission.CAMERA) &&
             !Permissions.canUseCamera(this)
         ) {
             Timber.d("Requesting Camera Permissions")
             ActivityCompat.requestPermissions(
-                this, arrayOf(Manifest.permission.CAMERA),
+                this,
+                arrayOf(Manifest.permission.CAMERA),
                 REQUEST_CAMERA_PERMISSION
             )
             return true
@@ -139,7 +142,7 @@ class MultimediaEditFieldActivity : AnkiActivity(), OnRequestPermissionsResultCa
 
         // If we went through the permission check once, we don't need to do it again.
         // As we only get here a second time if we have the required permissions
-        if (newUI.requiresPermissionCheck && performPermissionRequest(newUI.field)) {
+        if (newUI.requiresPermissionCheck && hasPerformedPermissionRequestForField(newUI.field)) {
             newUI.markAsPermissionRequested()
             return
         }
@@ -258,6 +261,7 @@ class MultimediaEditFieldActivity : AnkiActivity(), OnRequestPermissionsResultCa
         }
     }
 
+    @Deprecated("Deprecated in Java")
     @Suppress("deprecation") // onActivityResult
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         Timber.d("onActivityResult()")
@@ -456,8 +460,7 @@ class MultimediaEditFieldActivity : AnkiActivity(), OnRequestPermissionsResultCa
         const val IMAGE_LIMIT = 1024 * 1024 // 1MB in bytes
         @KotlinCleanup("see if we can make this non-null")
         @VisibleForTesting
-        @Suppress("deprecation", "UNCHECKED_CAST") // getSerializable
-        fun getFieldFromIntent(intent: Intent) = intent.extras!!.getSerializable(EXTRA_MULTIMEDIA_EDIT_FIELD_ACTIVITY) as MultimediaEditFieldActivityExtra?
+        fun getFieldFromIntent(intent: Intent) = intent.extras!!.getSerializableCompat<MultimediaEditFieldActivityExtra>(EXTRA_MULTIMEDIA_EDIT_FIELD_ACTIVITY)
     }
 }
 

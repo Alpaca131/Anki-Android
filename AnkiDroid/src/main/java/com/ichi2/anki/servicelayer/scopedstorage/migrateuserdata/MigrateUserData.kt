@@ -18,23 +18,33 @@ package com.ichi2.anki.servicelayer.scopedstorage.migrateuserdata
 
 import android.content.SharedPreferences
 import androidx.annotation.VisibleForTesting
+import com.ichi2.anki.R
 import com.ichi2.anki.model.Directory
 import com.ichi2.anki.model.DiskFile
 import com.ichi2.anki.model.RelativeFilePath
 import com.ichi2.anki.servicelayer.scopedstorage.MigrateEssentialFiles
 import com.ichi2.anki.servicelayer.scopedstorage.MoveConflictedFile
+import com.ichi2.anki.servicelayer.scopedstorage.MoveFile
 import com.ichi2.anki.servicelayer.scopedstorage.MoveFileOrDirectory
 import com.ichi2.anki.servicelayer.scopedstorage.migrateuserdata.MigrateUserData.Operation
 import com.ichi2.anki.servicelayer.scopedstorage.migrateuserdata.MigrateUserData.SingleRetryDecorator
-import com.ichi2.async.ProgressSenderAndCancelListener
-import com.ichi2.async.TaskDelegate
+import com.ichi2.anki.utils.TranslatableAggregateException
+import com.ichi2.anki.utils.getUserFriendlyErrorText
 import com.ichi2.compat.CompatHelper
-import com.ichi2.exceptions.AggregateException
-import com.ichi2.libanki.Collection
 import timber.log.Timber
 import java.io.File
+import java.util.concurrent.CountDownLatch
 
 typealias NumberOfBytes = Long
+
+fun NumberOfBytes.toKB(): Int {
+    return ((this / 1024).toInt())
+}
+
+fun NumberOfBytes.toMB(): Int {
+    return this.toKB() / 1024
+}
+
 /**
  * Function that is executed when one file is migrated, with the number of bytes moved.
  * Called with 0 when the file is already present in destination (i.e. successful move with no byte copied)
@@ -55,19 +65,21 @@ typealias MigrationProgressListener = (NumberOfBytes) -> Unit
  * This also handles preemption, allowing media files to skip the queue
  * (if they're required for review)
  */
-open class MigrateUserData protected constructor(val source: Directory, val destination: Directory) : TaskDelegate<NumberOfBytes, Boolean>() {
+open class MigrateUserData protected constructor(val source: Directory, val destination: Directory) {
     companion object {
         /**
          * Creates an instance of [MigrateUserData] if valid, returns null if a migration is not in progress, or throws if data is invalid
          * @return null if a migration is not taking place, otherwise a valid [MigrateUserData] instance
          *
-         * @throws IllegalStateException If preferences are in an invalid state (should be logically impossible - currently unrecoverable)
+         * @throws IllegalStateException if migration is not taking place,
+         *   or if preferences are in an invalid state
+         *   (should be logically impossible - currently unrecoverable)
          * @throws MissingDirectoryException If either or both the source/destination do not exist
          */
-        fun createInstance(preferences: SharedPreferences): MigrateUserData? {
+        fun createInstance(preferences: SharedPreferences): MigrateUserData {
             val migrationPreferences = UserDataMigrationPreferences.createInstance(preferences)
             if (!migrationPreferences.migrationInProgress) {
-                return null
+                throw IllegalStateException("Migration is not in progress")
             }
 
             return createInstance(migrationPreferences)
@@ -162,10 +174,14 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
          * @param transferred The number of bytes of the transferred file
          */
         abstract fun reportProgress(transferred: NumberOfBytes)
+
         /**
-         * Whether [File#renameTo] should be attempted
+         * Whether [File#renameTo] should be attempted for files.
          *
-         * In scoped storage, this is typically false, as we may be moving between mount points
+         * This is not attempted for directories: very unlikely to work as we're copying across
+         * mount points.
+         * Android has internal logic which recovers renames from /storage/emulated
+         * But this hasn't worked for me for folders
          */
         var attemptRename: Boolean = true
 
@@ -274,6 +290,19 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
         open val retryOperations get() = emptyList<Operation>()
     }
 
+    class AwaitableOperation(private val operation: Operation) : Operation() {
+        private val completion = CountDownLatch(1)
+
+        override fun execute(context: MigrationContext): List<Operation> {
+            try {
+                return operation.execute(context)
+            } finally {
+                this.completion.countDown()
+            }
+        }
+        fun await() = completion.await()
+    }
+
     /**
      * A decorator for [Operation] which executes [standardOperation].
      * When retried, executes [retryOperation].
@@ -295,7 +324,9 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
      */
     open class Executor(private val operations: ArrayDeque<Operation>) {
         /** Whether [terminate] was called. Once this is called, a new instance should be used */
-        private var terminated: Boolean = false
+        var terminated: Boolean = false
+            private set
+
         /**
          * A list of operations to be executed before [operations]
          * [operations] should only be executed if this list is clear
@@ -380,7 +411,7 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
      * @param progressReportParam A function, called for each file that is migrated, with the number of bytes of the file.
      */
     open class UserDataMigrationContext(private val executor: Executor, val source: Directory, val progressReportParam: MigrationProgressListener) : MigrationContext() {
-        val successfullyCompleted: Boolean get() = loggedExceptions.isEmpty()
+        val successfullyCompleted: Boolean get() = loggedExceptions.isEmpty() && !executor.terminated
 
         /**
          * The reason that the the execution of the whole migration was terminated early
@@ -427,7 +458,18 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
             loggedExceptions.add(ex)
             consecutiveExceptionsWithoutProgress++
             if (consecutiveExceptionsWithoutProgress >= 10) {
-                val exception = AggregateException.raise("10 consecutive exceptions without progress", loggedExceptions)
+                val exception = loggedExceptions.singleOrNull()
+                    ?: TranslatableAggregateException(
+                        message = "Multiple consecutive errors without progress",
+                        translatableMessage = {
+                            getString(
+                                R.string.error__etc__multiple_consecutive_errors_without_progress_most_recent,
+                                getUserFriendlyErrorText(loggedExceptions.last())
+                            )
+                        },
+                        causes = loggedExceptions
+                    )
+
                 failOperationWith(exception)
             }
         }
@@ -478,9 +520,8 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
      * @throws AggregateException If multiple exceptions were thrown when executing
      * @throws RuntimeException Various other failings if only a single exception was thrown
      */
-    override fun task(col: Collection, collectionTask: ProgressSenderAndCancelListener<NumberOfBytes>): Boolean {
-
-        val context = initializeContext(collectionTask::doProgress)
+    fun migrateFiles(progressListener: MigrationProgressListener) {
+        val context = initializeContext(progressListener)
 
         // define the function here, so we can execute it on retry
         fun moveRemainingFiles() {
@@ -501,13 +542,12 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
         // otherwise, there were a few exceptions which didn't stop execution, throw these.
         if (!context.successfullyCompleted) {
             context.terminatedWith?.let { throw it }
-            throw AggregateException.raise("", context.loggedExceptions) // TODO
+            throw context.loggedExceptions.singleOrNull()
+                ?: TranslatableAggregateException(causes = context.loggedExceptions)
         }
 
         // we are successfully migrated here
         // TODO: fix "conflicts" - check to see if conflicts are due to partially copied files in the destination
-
-        return true
     }
 
     @VisibleForTesting
@@ -573,6 +613,37 @@ open class MigrateUserData protected constructor(val source: Directory, val dest
         }
 
         return true
+    }
+
+    /**
+     * Migrate a file to [expectedFileLocation] if it exists inside [source]
+     * @param expectedFileLocation A file which should exist inside [destination]
+     * */
+    fun migrateFileImmediately(expectedFileLocation: File) {
+        // It is possible, but unlikely that a file at the location already exists
+        if (expectedFileLocation.exists()) {
+            Timber.d("nothing to migrate: file already exists")
+            return
+        }
+
+        // convert to a relative path WRT the destination (our current collection)
+        val relativeDataPath = RelativeFilePath.fromPaths(destination.directory, expectedFileLocation)
+            ?: throw IllegalStateException("Could not create relative path between ${destination.directory} and $expectedFileLocation")
+
+        // get a reference to the source file
+        val sourceFile = DiskFile.createInstance(relativeDataPath.toFile(source))
+        if (sourceFile == null) {
+            Timber.w("couldn't migrate: source file not found or not a file. Maybe a bad card. Maybe already moved")
+            return
+        }
+
+        val moveFile = MoveFile(sourceFile, expectedFileLocation)
+        AwaitableOperation(moveFile).also { operation ->
+            this.executor.preempt(operation)
+            operation.await()
+        }
+
+        Timber.w("complete migration: %s $relativeDataPath $sourceFile", expectedFileLocation)
     }
 }
 

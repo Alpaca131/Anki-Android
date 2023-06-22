@@ -23,6 +23,8 @@ import android.os.StatFs
 import com.ichi2.compat.CompatHelper
 import timber.log.Timber
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.util.*
@@ -37,6 +39,7 @@ object FileUtil {
             defaultValue
         }
     }
+
     /** Returns the current download Directory */
     fun getDownloadDirectory(): String {
         return Environment.DIRECTORY_DOWNLOADS
@@ -78,7 +81,30 @@ object FileUtil {
         val index = fileName.lastIndexOf(".")
         return if (index < 1) {
             null
-        } else AbstractMap.SimpleEntry(fileName.substring(0, index), fileName.substring(index))
+        } else {
+            AbstractMap.SimpleEntry(fileName.substring(0, index), fileName.substring(index))
+        }
+    }
+
+    /**
+     * Calculates the size of a [File].
+     * If it is a file, returns the size.
+     * If the file does not exist, returns 0
+     * If the file is a directory, recursively explore the directory tree and summing the length of each
+     * file. The time taken to calculate directory size is proportional to the number of files in the directory
+     * and all of its sub-directories. See: [DirectoryContentInformation.fromDirectory]
+     * It is assumed that directory contains no symbolic links.
+     *
+     * @param file Abstract representation of the file/directory whose size needs to be calculated
+     * @return Size of the File/Directory in bytes. 0 if the [File] does not exist
+     */
+    fun getSize(file: File): Long {
+        if (file.isFile) {
+            return file.length()
+        } else if (!file.exists()) {
+            return 0L
+        }
+        return DirectoryContentInformation.fromDirectory(file).totalBytes
     }
 
     /**
@@ -100,6 +126,9 @@ object FileUtil {
         val numberOfFiles: Int
     ) {
         companion object {
+            /**
+             * @throws IOException [root] does not exist
+             */
             fun fromDirectory(root: File): DirectoryContentInformation {
                 var totalBytes = 0L
                 var numberOfDirectories = 0
@@ -178,5 +207,46 @@ object FileUtil {
             depth++
         }
         return depth
+    }
+    enum class FilePrefix {
+        EQUAL,
+        STRICT_PREFIX,
+        STRICT_SUFFIX,
+        NOT_PREFIX
+    }
+
+    /**
+     * @return whether how [potentialPrefixFile] related to [fullFile] as far as prefix goes
+     * @throws FileNotFoundException if a file is not found
+     * @throws IOException If an I/O error occurs
+     */
+    fun isPrefix(potentialPrefixFile: File, fullFile: File): FilePrefix {
+        var potentialPrefixBuffer: FileInputStream? = null
+        var fullFileBuffer: FileInputStream? = null
+        try {
+            potentialPrefixBuffer = FileInputStream(potentialPrefixFile)
+            fullFileBuffer = FileInputStream(fullFile)
+            while (true) {
+                val prefixContent = potentialPrefixBuffer.read()
+                val fullFileContent = fullFileBuffer.read()
+                val prefixFileEnded = prefixContent == -1
+                val fullFileEnded = fullFileContent == -1
+                if (prefixFileEnded && fullFileEnded) {
+                    return FilePrefix.EQUAL
+                }
+                if (prefixFileEnded) {
+                    return FilePrefix.STRICT_PREFIX
+                }
+                if (fullFileEnded) {
+                    return FilePrefix.STRICT_SUFFIX
+                }
+                if (prefixContent != fullFileContent) {
+                    return FilePrefix.NOT_PREFIX
+                }
+            }
+        } finally {
+            potentialPrefixBuffer?.close()
+            fullFileBuffer?.close()
+        }
     }
 }

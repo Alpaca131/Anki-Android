@@ -17,9 +17,11 @@
 package com.ichi2.libanki
 
 import androidx.annotation.CheckResult
+import androidx.annotation.WorkerThread
 import org.json.JSONArray
 import org.json.JSONObject
 
+@WorkerThread
 abstract class ConfigManager {
     @CheckResult abstract fun has(key: String): Boolean
 
@@ -28,12 +30,19 @@ abstract class ConfigManager {
      * a mapping whose value is [JSONObject.NULL].
      */
     @CheckResult abstract fun isNull(key: String): Boolean
+
     @CheckResult abstract fun getString(key: String): String
+
     @CheckResult abstract fun getBoolean(key: String): Boolean
+
     @CheckResult abstract fun getDouble(key: String): Double
+
     @CheckResult abstract fun getInt(key: String): Int
+
     @CheckResult abstract fun getLong(key: String): Long
+
     @CheckResult abstract fun getJSONArray(key: String): JSONArray
+
     @CheckResult abstract fun getJSONObject(key: String): JSONObject
 
     abstract fun put(key: String, value: Boolean)

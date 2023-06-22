@@ -22,9 +22,9 @@
 package com.ichi2.libanki
 
 import android.content.ContentValues
-import android.text.TextUtils
 import androidx.annotation.CheckResult
 import androidx.annotation.VisibleForTesting
+import androidx.annotation.WorkerThread
 import com.ichi2.anki.CrashReportService
 import com.ichi2.anki.exception.ConfirmModSchemaException
 import com.ichi2.libanki.Consts.DECK_STD
@@ -48,6 +48,7 @@ import java.util.regex.Pattern
 @KotlinCleanup("remove unused functions")
 @KotlinCleanup("where ever possible replace ArrayList() with mutableListOf()")
 @KotlinCleanup("nullability")
+@WorkerThread
 class Decks(private val col: Collection) : DeckManager() {
     @get:RustCleanup("This exists in Rust as DecksDictProxy, but its usage is warned against")
     @KotlinCleanup("lateinit")
@@ -342,7 +343,7 @@ class Decks(private val col: Collection) : DeckManager() {
                     did,
                     did
                 )
-                col.remCards(cids)
+                col.removeCardsAndOrphanedNotes(cids)
             }
         }
         // delete the deck and add a grave
@@ -564,7 +565,7 @@ class Decks(private val col: Collection) : DeckManager() {
             if ("" == p) {
                 p = "blank"
             }
-            s += if (TextUtils.isEmpty(s)) {
+            s += if (s.isEmpty()) {
                 p
             } else {
                 "::$p"
@@ -595,7 +596,7 @@ class Decks(private val col: Collection) : DeckManager() {
         }
         for (i in 0 until path.size - 1) {
             val p = path[i]
-            s += if (TextUtils.isEmpty(s)) {
+            s += if (s.isEmpty()) {
                 p
             } else {
                 "::$p"
@@ -627,8 +628,8 @@ class Decks(private val col: Collection) : DeckManager() {
     override fun confForDid(did: Long): DeckConfig {
         val deck = get(did, false)!!
         if (deck.has("conf")) {
-            @KotlinCleanup("Clarify comment. It doesn't make sense when using :?")
             // fall back on default
+            @KotlinCleanup("Clarify comment. It doesn't make sense when using :?")
             val conf = getConf(deck.getLong("conf")) ?: getConf(1L)!!
             return conf.apply {
                 put("dyn", DECK_STD)
@@ -906,7 +907,7 @@ class Decks(private val col: Collection) : DeckManager() {
             childMap[deck.getLong("id")] = node
             val parts = listOf(*path(deck.getString("name")))
             if (parts.size > 1) {
-                val immediateParent = TextUtils.join("::", parts.subList(0, parts.size - 1))
+                val immediateParent = parts.subList(0, parts.size - 1).joinToString("::")
                 val pid = byName(immediateParent)!!.getLong("id")
                 childMap[pid]!![deck.getLong("id")] = node
             }
@@ -960,6 +961,7 @@ class Decks(private val col: Collection) : DeckManager() {
             save()
         }
     }
+
     /*
       Dynamic decks
      */
@@ -993,6 +995,7 @@ class Decks(private val col: Collection) : DeckManager() {
 
         // not in libAnki
         const val DECK_SEPARATOR = "::"
+
         @KotlinCleanup("Maybe use triple quotes and @language? for these properties")
         const val DEFAULT_DECK = (
             "" +
@@ -1080,6 +1083,7 @@ class Decks(private val col: Collection) : DeckManager() {
         }
 
         private val spaceAroundSeparator = Pattern.compile("\\s*::\\s*")
+
         @Suppress("NAME_SHADOWING")
         @VisibleForTesting
         fun strip(deckName: String): String {
@@ -1098,6 +1102,7 @@ class Decks(private val col: Collection) : DeckManager() {
      * **************************************
      */
         private val normalized = HashMap<String?, String>()
+
         @KotlinCleanup("nullability")
         fun normalizeName(name: String?): String? {
             if (!normalized.containsKey(name)) {
@@ -1130,7 +1135,7 @@ class Decks(private val col: Collection) : DeckManager() {
                     sParentCache[deckName] = null
                 } else {
                     parts = parts.subList(0, parts.size - 1)
-                    val parentName = TextUtils.join("::", parts)
+                    val parentName = parts.joinToString("::")
                     sParentCache[deckName] = parentName
                 }
             }

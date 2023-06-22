@@ -24,6 +24,7 @@ import android.os.PowerManager
 import android.os.PowerManager.WakeLock
 import com.ichi2.anki.AnkiDroidApp
 import com.ichi2.anki.CollectionHelper
+import com.ichi2.anki.CollectionManager
 import com.ichi2.anki.CrashReportService
 import com.ichi2.anki.R
 import com.ichi2.anki.exception.MediaSyncException
@@ -324,6 +325,8 @@ class Connection : BaseAsyncTask<Connection.Payload, Any, Connection.Payload>() 
                             val ret = fullSyncServer.download()
                             if (SUCCESS == ret) {
                                 data.success = true
+                                // Note: we don't set afterFullSync here, as that assumes the new schema
+                                // has already reopened the collection in the backend.
                                 col.reopen()
                             }
                             if (SUCCESS != ret) {
@@ -453,7 +456,7 @@ class Connection : BaseAsyncTask<Connection.Payload, Any, Connection.Payload>() 
         } finally {
             Timber.i("Sync Finished - Closing Collection")
             // don't bump mod time unless we explicitly save
-            col?.close(false)
+            CollectionManager.closeCollectionBlocking(false)
             CollectionHelper.instance.unlockCollection()
         }
     }

@@ -24,6 +24,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.SQLException
 import android.database.sqlite.SQLiteDatabase
+import androidx.annotation.WorkerThread
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.ichi2.anki.BuildConfig
 import com.ichi2.anki.CollectionHelper
@@ -35,16 +36,13 @@ import net.ankiweb.rsdroid.Backend
 import net.ankiweb.rsdroid.database.AnkiSupportSQLiteDatabase
 import org.intellij.lang.annotations.Language
 import timber.log.Timber
-import java.lang.Exception
-import java.lang.RuntimeException
-import java.util.ArrayList
-import kotlin.Throws
 
 /**
  * Database layer for AnkiDroid. Wraps an SupportSQLiteDatabase (provided by either the Rust backend
  * or the Android framework), and provides some helpers on top.
  */
 @KotlinCleanup("Improve documentation")
+@WorkerThread
 class DB(db: SupportSQLiteDatabase) {
     /**
      * The collection, which is actually an SQLite database.
@@ -105,7 +103,7 @@ class DB(db: SupportSQLiteDatabase) {
     }
 
     // Allows to avoid using new Object[]
-    fun query(@Language("SQL") query: String?, vararg selectionArgs: Any): Cursor {
+    fun query(@Language("SQL") query: String, vararg selectionArgs: Any): Cursor {
         return database.query(query, selectionArgs)
     }
 
@@ -115,7 +113,7 @@ class DB(db: SupportSQLiteDatabase) {
      * @param query The raw SQL query to use.
      * @return The integer result of the query.
      */
-    fun queryScalar(@Language("SQL") query: String?, vararg selectionArgs: Any): Int {
+    fun queryScalar(@Language("SQL") query: String, vararg selectionArgs: Any): Int {
         var cursor: Cursor? = null
         val scalar: Int
         try {
@@ -203,11 +201,13 @@ class DB(db: SupportSQLiteDatabase) {
     @KotlinCleanup("""Use Kotlin string. Change split so that there is no empty string after last ";".""")
     fun executeScript(@Language("SQL") sql: String) {
         mod = true
-        @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") val queries = java.lang.String(sql).split(";")
+        @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+        val queries = java.lang.String(sql).split(";")
         for (query in queries) {
             database.execSQL(query)
         }
     }
+
     /** update must always be called via DB in order to mark the db as changed  */
     fun update(
         table: String,
@@ -269,8 +269,11 @@ class DB(db: SupportSQLiteDatabase) {
             }
             return result
         } finally {
-            safeEndInTransaction(database)
+            database.safeEndInTransaction()
         }
+    }
+    fun safeEndInTransaction() {
+        database.safeEndInTransaction()
     }
 
     companion object {
@@ -286,7 +289,7 @@ class DB(db: SupportSQLiteDatabase) {
                 SupportSQLiteOpenHelperCallback(1)
             )
             db.disableWriteAheadLogging()
-            db.query("PRAGMA synchronous = 2", null)
+            db.query("PRAGMA synchronous = 2")
             return DB(db)
         }
 
@@ -298,14 +301,10 @@ class DB(db: SupportSQLiteDatabase) {
             return DB(AnkiSupportSQLiteDatabase.withRustBackend(backend))
         }
 
-        fun safeEndInTransaction(database: DB) {
-            safeEndInTransaction(database.database)
-        }
-
-        fun safeEndInTransaction(database: SupportSQLiteDatabase) {
-            if (database.inTransaction()) {
+        fun SupportSQLiteDatabase.safeEndInTransaction() {
+            if (inTransaction()) {
                 try {
-                    database.endTransaction()
+                    endTransaction()
                 } catch (e: Exception) {
                     // endTransaction throws about invalid transaction even when you check first!
                     Timber.w(e)

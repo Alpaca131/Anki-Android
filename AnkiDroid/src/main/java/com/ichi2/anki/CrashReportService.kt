@@ -48,19 +48,29 @@ object CrashReportService {
     /** Our ACRA configurations, initialized during Application.onCreate()  */
     @JvmStatic
     private var logcatArgs = arrayOf(
-        "-t", "100", "-v", "time", "ActivityManager:I", "SQLiteLog:W", AnkiDroidApp.TAG + ":D", "*:S"
+        "-t",
+        "500",
+        "-v",
+        "time",
+        "ActivityManager:I",
+        "SQLiteLog:W",
+        AnkiDroidApp.TAG + ":D",
+        "*:S"
     )
+
     @JvmStatic
     private var dialogEnabled = true
+
     @JvmStatic
     private lateinit var toastText: String
+
     @JvmStatic
     lateinit var acraCoreConfigBuilder: CoreConfigurationBuilder
         private set
     private lateinit var mApplication: Application
     private const val WEBVIEW_VER_NAME = "WEBVIEW_VER_NAME"
     private const val MIN_INTERVAL_MS = 60000
-    private const val EXCEPTION_MESSAGE = "Exception report sent by user manually"
+    private const val EXCEPTION_MESSAGE = "Exception report sent by user manually. See: 'Comment/USER_COMMENT'"
 
     private enum class ToastType(@StringRes private val toastMessageRes: Int) {
         AUTO_TOAST(R.string.feedback_auto_toast_text),
@@ -99,7 +109,7 @@ object CrashReportService {
                 ReportField.INSTALLATION_ID,
                 ReportField.ENVIRONMENT,
                 ReportField.SHARED_PREFERENCES,
-                ReportField.MEDIA_CODEC_LIST,
+                // ReportField.MEDIA_CODEC_LIST,
                 ReportField.THREAD_DETAILS
             )
             .withLogcatArguments(*logcatArgs)
@@ -208,7 +218,7 @@ object CrashReportService {
         setAcraReportingMode(FEEDBACK_REPORT_NEVER)
         prefs.edit { putString(FEEDBACK_REPORT_KEY, FEEDBACK_REPORT_NEVER) }
         // Use a wider logcat filter in case crash reporting manually re-enabled
-        logcatArgs = arrayOf("-t", "300", "-v", "long", "ACRA:S")
+        logcatArgs = arrayOf("-t", "1500", "-v", "long", "ACRA:S")
         createAcraCoreConfigBuilder()
     }
 

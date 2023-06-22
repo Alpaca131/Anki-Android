@@ -28,6 +28,7 @@ import android.content.res.Resources
 import android.database.sqlite.SQLiteDatabaseLockedException
 import androidx.annotation.CheckResult
 import androidx.annotation.VisibleForTesting
+import androidx.annotation.WorkerThread
 import anki.search.SearchNode
 import anki.search.SearchNodeKt
 import anki.search.searchNode
@@ -51,6 +52,7 @@ import com.ichi2.libanki.sched.SchedV2
 import com.ichi2.libanki.sched.SchedV3
 import com.ichi2.libanki.template.ParsedNode
 import com.ichi2.libanki.template.TemplateError
+import com.ichi2.libanki.utils.NotInLibAnki
 import com.ichi2.libanki.utils.Time
 import com.ichi2.libanki.utils.TimeManager
 import com.ichi2.upgrade.upgradeJSONIfNecessary
@@ -79,11 +81,15 @@ import kotlin.random.Random
 @KotlinCleanup("TextUtils -> Kotlin isNotEmpty()")
 @KotlinCleanup("inline function in init { } so we don't need to init `crt` etc... at the definition")
 @KotlinCleanup("ids.size != 0")
+@WorkerThread
 open class Collection(
     /**
      * @return The context that created this Collection.
      */
     val context: Context,
+    /**
+     *  @param Path The path to the collection.anki2 database. Must be unicode and openable with [File].
+     */
     val path: String,
     var server: Boolean,
     private var debugLog: Boolean, // Not in libAnki.
@@ -167,6 +173,7 @@ open class Collection(
     open var crt: Long = 0
     open var mod: Long = 0
     open var scm: Long = 0
+
     @RustCleanup("remove")
     var dirty: Boolean = false
     private var mUsn = 0
@@ -185,12 +192,11 @@ open class Collection(
 
     init {
         media = initMedia()
+        tags = initTags()
         val created = reopen()
         log(path, VersionUtils.pkgVersionName)
         // mLastSave = getTime().now(); // assigned but never accessed - only leaving in for upstream comparison
         clearUndo()
-        tags = initTags()
-        load()
         if (crt == 0L) {
             crt = UIUtils.getDayStart(TimeManager.time) / 1000
         }
@@ -341,7 +347,8 @@ open class Collection(
         while (true) {
             db.query(
                 "SELECT substr($columnName, ?, ?) FROM col",
-                pos.toString(), chunk.toString()
+                pos.toString(),
+                chunk.toString()
             ).use { cursor ->
                 if (!cursor.moveToFirst()) {
                     return buf.toString()
@@ -417,25 +424,13 @@ open class Collection(
      * Disconnect from DB.
      */
     @Synchronized
-    fun close() {
-        close(true)
-    }
-
-    @Synchronized
-    fun close(save: Boolean) {
-        close(save, false)
-    }
-
-    @Synchronized
-    @KotlinCleanup("remove/rename val db")
-    fun close(save: Boolean, downgrade: Boolean, forFullSync: Boolean = false) {
+    fun close(save: Boolean = true, downgrade: Boolean = false, forFullSync: Boolean = false) {
         if (!dbClosed) {
             try {
-                val db = db.database
                 if (save) {
-                    this.db.executeInTransaction { this.save() }
+                    db.executeInTransaction { this.save() }
                 } else {
-                    DB.safeEndInTransaction(db)
+                    db.safeEndInTransaction()
                 }
             } catch (e: RuntimeException) {
                 Timber.w(e)
@@ -457,6 +452,7 @@ open class Collection(
         return if (dbClosed) {
             val (db_, created) = Storage.openDB(path, backend, afterFullSync)
             dbInternal = db_
+            load()
             media.connect()
             _openLog()
             if (afterFullSync) {
@@ -571,7 +567,7 @@ open class Collection(
     /**
      * Deletion logging ********************************************************* **************************************
      */
-    fun _logRem(ids: kotlin.collections.Collection<Long>, @Consts.REM_TYPE type: Int) {
+    fun _logRem(ids: Iterable<Long>, @Consts.REM_TYPE type: Int) {
         for (id in ids) {
             val values = ContentValues().apply {
                 put("usn", usn())
@@ -637,7 +633,7 @@ open class Collection(
     open fun remNotes(ids: LongArray) {
         val list = db
             .queryLongList("SELECT id FROM cards WHERE nid IN " + Utils.ids2str(ids))
-        remCards(list)
+        removeCardsAndOrphanedNotes(list)
     }
 
     /**
@@ -711,14 +707,6 @@ open class Collection(
         return genCards<CollectionTask<Int, Int>>(nids.toLongArray(), model)
     }
 
-    fun <T> genCards(
-        nids: kotlin.collections.Collection<Long>,
-        model: Model,
-        task: T?
-    ): ArrayList<Long>? where T : ProgressSender<Int>?, T : CancelListener? {
-        return genCards(nids.toLongArray(), model, task)
-    }
-
     fun genCards(nids: kotlin.collections.Collection<Long>, mid: NoteTypeId): ArrayList<Long>? {
         return genCards(nids, models.get(mid)!!)
     }
@@ -790,6 +778,7 @@ open class Collection(
                     val ord = cur.getInt(2)
                     val did = cur.getLong(3)
                     val due = cur.getLong(4)
+
                     @Consts.CARD_TYPE val type = cur.getInt(5)
 
                     // existing cards
@@ -980,13 +969,15 @@ open class Collection(
     /**
      * Bulk delete cards by ID.
      */
-    fun remCards(ids: List<Long>) {
-        remCards(ids, true)
+    open fun removeCardsAndOrphanedNotes(cardIds: Iterable<Long>) {
+        removeCardsAndOrphanedNotes(cardIds, true)
     }
 
-    @KotlinCleanup("add overloads")
-    fun remCards(ids: kotlin.collections.Collection<Long>, notes: Boolean) {
-        if (ids.isEmpty()) {
+    /**
+     * Bulk delete cards by ID.
+     */
+    fun removeCardsAndOrphanedNotes(ids: Iterable<Long>, notes: Boolean) {
+        if (!ids.iterator().hasNext()) {
             return
         }
         val sids = Utils.ids2str(ids)
@@ -1005,10 +996,10 @@ open class Collection(
         _remNotes(nids)
     }
 
-    fun <T> emptyCids(task: T?): List<Long> where T : ProgressSender<Int>?, T : CancelListener? {
+    fun emptyCids(): List<Long> {
         val rem: MutableList<Long> = ArrayList()
         for (m in models.all()) {
-            rem.addAll(genCards(models.nids(m), m, task)!!)
+            rem.addAll(genCards(models.nids(m), m)!!)
         }
         return rem
     }
@@ -1177,7 +1168,9 @@ open class Collection(
         val flag = flags and 0b111
         return if (flag == 0) {
             ""
-        } else "flag$flag"
+        } else {
+            "flag$flag"
+        }
     }
     /*
       Finding cards ************************************************************ ***********************************
@@ -1210,6 +1203,7 @@ open class Collection(
     fun buildSearchString(node: SearchNode): String {
         return backend.buildSearchString(node)
     }
+
     /** Return a list of card ids  */
     @KotlinCleanup("set reasonable defaults")
     fun findCards(search: String): List<Long> {
@@ -1313,7 +1307,9 @@ open class Collection(
                 get_config_int("timeLim"),
                 sched.reps - mStartReps
             )
-        } else null
+        } else {
+            null
+        }
     }
 
     /*
@@ -1335,7 +1331,9 @@ open class Collection(
     fun undoType(): UndoAction? {
         return if (!undo.isEmpty()) {
             undo.last
-        } else null
+        } else {
+            null
+        }
     }
 
     open fun undoName(res: Resources): String {
@@ -1354,8 +1352,6 @@ open class Collection(
         return lastUndo.undo(this)
     }
 
-    @BlocksSchemaUpgrade("audit all UI actions that call this, and make sure they call a backend method")
-    @RustCleanup("this will be unnecessary after legacy schema dropped")
     /**
      * In the legacy schema, this adds the undo action to the undo list.
      * In the new schema, this action is not useful, as the backend stores its own
@@ -1363,6 +1359,8 @@ open class Collection(
      * operation available. If you find an action is not undoable with the new backend,
      * you probably need to be calling the relevant backend method to perform it,
      * instead of trying to do it with raw SQL. */
+    @BlocksSchemaUpgrade("audit all UI actions that call this, and make sure they call a backend method")
+    @RustCleanup("this will be unnecessary after legacy schema dropped")
     fun markUndo(undoAction: UndoAction) {
         Timber.d("markUndo() of type %s", undoAction.javaClass)
         undo.add(undoAction)
@@ -1473,7 +1471,8 @@ open class Collection(
             val badOrd = db.queryScalar(
                 "select 1 from cards where (ord < 0 or ord >= ?) and nid in ( " +
                     "select id from notes where mid = ?) limit 1",
-                tmpls.length(), m.getLong("id")
+                tmpls.length(),
+                m.getLong("id")
             ) > 0
             if (badOrd) {
                 return false
@@ -1768,7 +1767,9 @@ open class Collection(
                 Utils.ids2str(dynDeckIds) +
                 "and odid in " +
                 Utils.ids2str(dynIdsAndZero),
-            nextDeckId, TimeManager.time.intTime(), usn()
+            nextDeckId,
+            TimeManager.time.intTime(),
+            usn()
         )
         result.cardsWithFixedHomeDeckCount = cardIds.size
         val message = String.format(Locale.US, "Fixed %d cards with no home deck", cardIds.size)
@@ -1840,7 +1841,9 @@ open class Collection(
                 "UPDATE cards SET due = ?, ivl = 1, mod = ?, usn = ? WHERE id IN " + Utils.ids2str(
                     ids
                 ),
-                sched.today, TimeManager.time.intTime(), usn()
+                sched.today,
+                TimeManager.time.intTime(),
+                usn()
             )
         }
         return problems
@@ -1976,7 +1979,7 @@ open class Collection(
         notifyProgress.run()
         if (ids.size != 0) {
             problems.add("Deleted " + ids.size + " card(s) with missing note.")
-            remCards(ids)
+            removeCardsAndOrphanedNotes(ids)
         }
         return problems
     }
@@ -2032,7 +2035,8 @@ open class Collection(
                     )
                     if (firstException == null) {
                         val details = String.format(
-                            Locale.ROOT, "deleteNotesWithWrongFieldCounts row: %d col: %d",
+                            Locale.ROOT,
+                            "deleteNotesWithWrongFieldCounts row: %d col: %d",
                             currentRow,
                             cur.columnCount
                         )
@@ -2074,7 +2078,7 @@ open class Collection(
             )
             if (ids.isNotEmpty()) {
                 problems.add("Deleted " + ids.size + " card(s) with missing template.")
-                remCards(ids)
+                removeCardsAndOrphanedNotes(ids)
             }
         }
         return problems
@@ -2205,7 +2209,10 @@ open class Collection(
             "update cards set flags = (flags & ~?) | ?, usn=?, mod=? where id in " + Utils.ids2str(
                 cids
             ),
-            7, flag, usn(), TimeManager.time.intTime()
+            7,
+            flag,
+            usn(),
+            TimeManager.time.intTime()
         )
     }
 
@@ -2326,35 +2333,45 @@ open class Collection(
     fun get_config(key: String, defaultValue: Boolean?): Boolean? {
         return if (config!!.isNull(key)) {
             defaultValue
-        } else config!!.getBoolean(key)
+        } else {
+            config!!.getBoolean(key)
+        }
     }
 
     @Contract("_, !null -> !null")
     fun get_config(key: String, defaultValue: Long?): Long? {
         return if (config!!.isNull(key)) {
             defaultValue
-        } else config!!.getLong(key)
+        } else {
+            config!!.getLong(key)
+        }
     }
 
     @Contract("_, !null -> !null")
     fun get_config(key: String, defaultValue: Int?): Int? {
         return if (config!!.isNull(key)) {
             defaultValue
-        } else config!!.getInt(key)
+        } else {
+            config!!.getInt(key)
+        }
     }
 
     @Contract("_, !null -> !null")
     fun get_config(key: String, defaultValue: Double?): Double? {
         return if (config!!.isNull(key)) {
             defaultValue
-        } else config!!.getDouble(key)
+        } else {
+            config!!.getDouble(key)
+        }
     }
 
     @Contract("_, !null -> !null")
     fun get_config(key: String, defaultValue: String?): String? {
         return if (config!!.isNull(key)) {
             defaultValue
-        } else config!!.getString(key)
+        } else {
+            config!!.getString(key)
+        }
     }
 
     /** Edits to the config are not persisted to the preferences  */
@@ -2362,7 +2379,9 @@ open class Collection(
     fun get_config(key: String, defaultValue: JSONObject?): JSONObject? {
         return if (config!!.isNull(key)) {
             if (defaultValue == null) null else defaultValue.deepClone()
-        } else config!!.getJSONObject(key).deepClone()
+        } else {
+            config!!.getJSONObject(key).deepClone()
+        }
     }
 
     /** Edits to the array are not persisted to the preferences  */
@@ -2370,7 +2389,9 @@ open class Collection(
     fun get_config(key: String, defaultValue: JSONArray?): JSONArray? {
         return if (config!!.isNull(key)) {
             if (defaultValue == null) null else JSONArray(defaultValue)
-        } else JSONArray(config!!.getJSONArray(key))
+        } else {
+            JSONArray(config!!.getJSONArray(key))
+        }
     }
 
     fun set_config(key: String, value: Boolean) {
@@ -2446,7 +2467,9 @@ open class Collection(
     open fun setDeck(cids: LongArray, did: Long) {
         db.execute(
             "update cards set did=?,usn=?,mod=? where id in " + Utils.ids2str(cids),
-            did, usn(), TimeManager.time.intTime()
+            did,
+            usn(),
+            TimeManager.time.intTime()
         )
     }
 
@@ -2537,4 +2560,15 @@ open class Collection(
 
         private const val SQLITE_WINDOW_SIZE_KB = 2048
     }
+}
+
+/**
+ * @throws JSONException object can't be cast
+ */
+@NotInLibAnki
+fun Collection.get_config_int(key: String, defaultValue: Int): Int {
+    if (has_config_not_null(key)) {
+        return get_config_int(key)
+    }
+    return defaultValue
 }

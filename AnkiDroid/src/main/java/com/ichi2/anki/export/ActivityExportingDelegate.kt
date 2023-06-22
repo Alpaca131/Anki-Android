@@ -35,7 +35,10 @@ import com.ichi2.anki.CollectionManager.withCol
 import com.ichi2.anki.UIUtils.showThemedToast
 import com.ichi2.anki.dialogs.ExportCompleteDialog.ExportCompleteDialogListener
 import com.ichi2.anki.dialogs.ExportDialog.ExportDialogListener
+import com.ichi2.anki.dialogs.ExportDialogParams
+import com.ichi2.anki.servicelayer.ScopedStorageService
 import com.ichi2.anki.snackbar.showSnackbar
+import com.ichi2.annotations.NeedsTest
 import com.ichi2.compat.CompatHelper
 import com.ichi2.libanki.AnkiPackageExporter
 import com.ichi2.libanki.Collection
@@ -62,22 +65,12 @@ class ActivityExportingDelegate(private val activity: AnkiActivity, private val 
     private val mSaveFileLauncher: ActivityResultLauncher<Intent>
     private lateinit var mExportFileName: String
 
-    fun showExportDialog(msg: String) {
-        activity.showDialogFragment(mDialogsFactory.newExportDialog().withArguments(msg))
-    }
-
-    fun showExportDialog(msg: String, did: DeckId) {
-        activity.showDialogFragment(mDialogsFactory.newExportDialog().withArguments(msg, did))
-    }
-
-    /**
-     * Show the export dialog in the Browser to export selected cards or notes
-     * @param msg the message to show in the dialog
-     * @param ids the selected card/note ids
-     * @param isCardList true if the ids are card ids, false if they are note ids
-     */
-    fun showExportDialog(msg: String, ids: List<Long>, isCardList: Boolean) {
-        activity.showDialogFragment(mDialogsFactory.newExportDialog().withArguments(msg, ids, isCardList))
+    fun showExportDialog(params: ExportDialogParams) {
+        if (ScopedStorageService.mediaMigrationIsInProgress(activity)) {
+            activity.showSnackbar(R.string.functionality_disabled_during_storage_migration, Snackbar.LENGTH_SHORT)
+            return
+        }
+        activity.showDialogFragment(mDialogsFactory.newExportDialog().withArguments(params))
     }
 
     private fun getTimeStampSuffix() =
@@ -106,6 +99,7 @@ class ActivityExportingDelegate(private val activity: AnkiActivity, private val 
         }
     }
 
+    @NeedsTest("exporting deck with name containing apostrophe")
     override fun exportColAsApkgOrColpkg(path: String?, includeSched: Boolean, includeMedia: Boolean) {
         val exportPath = getExportFileName(path, "All Decks", includeSched)
 
@@ -186,9 +180,11 @@ class ActivityExportingDelegate(private val activity: AnkiActivity, private val 
             showThemedToast(activity, activity.resources.getString(R.string.apk_share_error), false)
             return
         }
+        val authority = "${activity.packageName}.apkgfileprovider"
+
         // Get a URI for the file to be shared via the FileProvider API
         val uri: Uri = try {
-            FileProvider.getUriForFile(activity, "com.ichi2.anki.apkgfileprovider", attachment)
+            FileProvider.getUriForFile(activity, authority, attachment)
         } catch (e: IllegalArgumentException) {
             Timber.e("Could not generate a valid URI for the apkg file")
             showThemedToast(activity, activity.resources.getString(R.string.apk_share_error), false)
@@ -202,7 +198,7 @@ class ActivityExportingDelegate(private val activity: AnkiActivity, private val 
                 activity.getString(
                     R.string.export_email_text,
                     activity.getString(R.string.link_manual),
-                    activity.getString(R.string.link_distributions),
+                    activity.getString(R.string.link_distributions)
                 )
             )
             .intent.apply {
@@ -311,13 +307,15 @@ class ActivityExportingDelegate(private val activity: AnkiActivity, private val 
         if (::mExportFileName.isInitialized && !mExportFileName.endsWith(".colpkg")) return
         AnkiDroidApp.getSharedPrefs(activity).edit {
             putLong(
-                LAST_SUCCESSFUL_EXPORT_AT_SECOND_KEY, TimeManager.time.intTime()
+                LAST_SUCCESSFUL_EXPORT_AT_SECOND_KEY,
+                TimeManager.time.intTime()
             )
         }
         val col = collectionSupplier.get()
         AnkiDroidApp.getSharedPrefs(activity).edit {
             putLong(
-                LAST_SUCCESSFUL_EXPORT_AT_MOD_KEY, col.mod
+                LAST_SUCCESSFUL_EXPORT_AT_MOD_KEY,
+                col.mod
             )
         }
     }

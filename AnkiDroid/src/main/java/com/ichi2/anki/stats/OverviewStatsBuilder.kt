@@ -25,6 +25,7 @@ import com.ichi2.libanki.Utils
 import com.ichi2.libanki.stats.Stats
 import com.ichi2.libanki.stats.Stats.AxisType
 import com.ichi2.themes.Themes.getColorFromAttr
+import com.ichi2.utils.toRGBHex
 import java.util.*
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -65,13 +66,14 @@ class OverviewStatsBuilder(private val webView: WebView, private val col: Collec
             val percentage: Double
                 get() = if (correct == 0) {
                     0.0
-                } else correct.toDouble() / total.toDouble() * 100.0
+                } else {
+                    correct.toDouble() / total.toDouble() * 100.0
+                }
         }
     }
 
     fun createInfoHtmlString(): String {
-        val textColorInt = getColorFromAttr(webView.context, R.attr.textColor)
-        val textColor = String.format("#%06X", 0xFFFFFF and textColorInt) // Color to hex string
+        val textColor = getColorFromAttr(webView.context, R.attr.textColor).toRGBHex()
         val css = """
                <style>
                h1, h3 { margin-bottom: 0; margin-top: 1em; text-transform: capitalize; }
@@ -98,7 +100,8 @@ class OverviewStatsBuilder(private val webView: WebView, private val col: Collec
         val daysStudied = res.getString(
             stats_overview_days_studied,
             (oStats.daysStudied.toFloat() / oStats.allDays.toFloat() * 100).toInt(),
-            oStats.daysStudied, oStats.allDays
+            oStats.daysStudied,
+            oStats.allDays
         )
 
         // FORECAST
@@ -192,7 +195,9 @@ class OverviewStatsBuilder(private val webView: WebView, private val col: Collec
         stringBuilder.append(
             res.getQuantityString(
                 com.ichi2.anki.R.plurals.stats_today_cards,
-                todayStats[CARDS_INDEX], todayStats[CARDS_INDEX], span
+                todayStats[CARDS_INDEX],
+                todayStats[CARDS_INDEX],
+                span
             )
         )
         stringBuilder.append("<br>")

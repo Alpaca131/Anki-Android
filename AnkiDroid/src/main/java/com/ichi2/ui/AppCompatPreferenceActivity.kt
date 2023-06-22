@@ -25,18 +25,19 @@ import android.preference.PreferenceActivity
 import android.view.*
 import androidx.annotation.LayoutRes
 import androidx.appcompat.app.ActionBar
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.Toolbar
-import com.ichi2.anki.AnkiDroidApp
 import com.ichi2.anki.CollectionHelper
+import com.ichi2.anki.R
 import com.ichi2.anki.receiver.SdCardReceiver
 import com.ichi2.libanki.Collection
 import com.ichi2.libanki.Deck
-import com.ichi2.utils.HashUtil
-import com.ichi2.utils.KotlinCleanup
+import com.ichi2.utils.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import net.ankiweb.rsdroid.BackendException
 import timber.log.Timber
 import java.util.*
 
@@ -152,7 +153,9 @@ abstract class AppCompatPreferenceActivity<PreferenceHack : AppCompatPreferenceA
             Timber.d("getString(key=%s, defValue=%s)", key, defValue)
             return if (!mValues.containsKey(key)) {
                 defValue
-            } else mValues[key]
+            } else {
+                mValues[key]
+            }
         }
 
         override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
@@ -185,10 +188,6 @@ abstract class AppCompatPreferenceActivity<PreferenceHack : AppCompatPreferenceA
         } else {
             finish()
         }
-    }
-
-    override fun attachBaseContext(base: Context) {
-        super.attachBaseContext(AnkiDroidApp.updateContextWithLanguage(base))
     }
 
     override fun onPostCreate(savedInstanceState: Bundle?) {
@@ -298,7 +297,7 @@ abstract class AppCompatPreferenceActivity<PreferenceHack : AppCompatPreferenceA
     @Deprecated("Deprecated in Java")
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId == android.R.id.home) {
-            closeWithResult()
+            tryCloseWithResult()
             return true
         }
         return false
@@ -307,10 +306,25 @@ abstract class AppCompatPreferenceActivity<PreferenceHack : AppCompatPreferenceA
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && event.repeatCount == 0) {
             Timber.i("DeckOptions - onBackPressed()")
-            closeWithResult()
+            tryCloseWithResult()
             return true
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    private fun tryCloseWithResult() {
+        try {
+            closeWithResult()
+        } catch (e: BackendException) {
+            Timber.e(e, "Backend exception while trying to finish an AppCompatPreferenceActivity")
+            AlertDialog.Builder(this).show {
+                title(text = resources.getString(R.string.pref__widget_text__error))
+                message(text = e.message)
+                positiveButton(R.string.dialog_ok) { dialogInterface ->
+                    dialogInterface.dismiss()
+                }
+            }
+        }
     }
 
     override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {

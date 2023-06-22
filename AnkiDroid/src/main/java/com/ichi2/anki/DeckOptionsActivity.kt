@@ -22,21 +22,18 @@ import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.res.Configuration
 import android.os.Bundle
 import android.preference.CheckBoxPreference
 import android.preference.ListPreference
 import android.preference.Preference
 import android.preference.PreferenceScreen
-import android.text.TextUtils
-import com.afollestad.materialdialogs.MaterialDialog
+import androidx.appcompat.app.AlertDialog
 import com.ichi2.anim.ActivityTransitionAnimation
 import com.ichi2.anim.ActivityTransitionAnimation.Direction.FADE
 import com.ichi2.anki.CollectionManager.withCol
 import com.ichi2.anki.exception.ConfirmModSchemaException
 import com.ichi2.anki.services.ReminderService
 import com.ichi2.annotations.NeedsTest
-import com.ichi2.async.TaskListenerWithContext
 import com.ichi2.async.changeDeckConfiguration
 import com.ichi2.compat.CompatHelper
 import com.ichi2.libanki.Collection
@@ -44,15 +41,13 @@ import com.ichi2.libanki.Consts
 import com.ichi2.libanki.DeckConfig
 import com.ichi2.libanki.utils.Time
 import com.ichi2.libanki.utils.TimeManager
-import com.ichi2.libanki.utils.set
 import com.ichi2.preferences.NumberRangePreference
 import com.ichi2.preferences.StepsPreference
 import com.ichi2.preferences.TimePreference
 import com.ichi2.themes.StyledProgressDialog
 import com.ichi2.themes.Themes
-import com.ichi2.themes.Themes.themeFollowsSystem
-import com.ichi2.themes.Themes.updateCurrentTheme
 import com.ichi2.ui.AppCompatPreferenceActivity
+import com.ichi2.utils.*
 import com.ichi2.utils.KotlinCleanup
 import com.ichi2.utils.NamedJSONComparator
 import kotlinx.coroutines.launch
@@ -64,7 +59,6 @@ import java.util.*
 
 @NeedsTest("onCreate - to be done after preference migration (5019)")
 @KotlinCleanup("lateinit wherever possible")
-@KotlinCleanup("IDE lint")
 class DeckOptionsActivity :
     AppCompatPreferenceActivity<DeckOptionsActivity.DeckPreferenceHack>() {
     private lateinit var mOptions: DeckConfig
@@ -74,7 +68,7 @@ class DeckOptionsActivity :
         lateinit var progressDialog: android.app.ProgressDialog
         private val mListeners: MutableList<SharedPreferences.OnSharedPreferenceChangeListener> = LinkedList()
 
-        val deckOptionsActivity: DeckOptionsActivity
+        private val deckOptionsActivity: DeckOptionsActivity
             get() = this@DeckOptionsActivity
 
         override fun cacheValues() {
@@ -137,7 +131,9 @@ class DeckOptionsActivity :
 
                     mValues["reminderEnabled"] = reminder.getBoolean("enabled").toString()
                     mValues["reminderTime"] = String.format(
-                        "%1$02d:%2$02d", reminderTime.getLong(0), reminderTime.getLong(1)
+                        "%1$02d:%2$02d",
+                        reminderTime.getLong(0),
+                        reminderTime.getLong(1)
                     )
                 } else {
                     mValues["reminderEnabled"] = "false"
@@ -172,8 +168,10 @@ class DeckOptionsActivity :
         fun preConfChange() {
             val res = deckOptionsActivity.resources
             progressDialog = StyledProgressDialog.show(
-                deckOptionsActivity as Context, null,
-                res?.getString(R.string.reordering_cards), false
+                deckOptionsActivity as Context,
+                null,
+                res?.getString(R.string.reordering_cards),
+                false
             )
         }
 
@@ -259,7 +257,7 @@ class DeckOptionsActivity :
                             }
                             "confRename" -> {
                                 val newName = value as String
-                                if (!TextUtils.isEmpty(newName)) {
+                                if (newName.isNotEmpty()) {
                                     mOptions.put("name", newName)
                                 }
                             }
@@ -272,7 +270,7 @@ class DeckOptionsActivity :
                             }
                             "confAdd" -> {
                                 val newName = value as String
-                                if (!TextUtils.isEmpty(newName)) {
+                                if (newName.isNotEmpty()) {
                                     // New config clones current config
                                     val id = col.decks.confId(newName, mOptions.toString())
                                     deck.put("conf", id)
@@ -283,7 +281,8 @@ class DeckOptionsActivity :
                                 // Don't remove the options group if it's the default group
                                 UIUtils.showThemedToast(
                                     this@DeckOptionsActivity,
-                                    resources.getString(R.string.default_conf_delete_error), false
+                                    resources.getString(R.string.default_conf_delete_error),
+                                    false
                                 )
                             } else {
                                 // Remove options group, handling the case where the user needs to confirm full sync
@@ -293,7 +292,7 @@ class DeckOptionsActivity :
                                     e.log()
                                     // Libanki determined that a full sync will be required, so confirm with the user before proceeding
                                     // TODO : Use ConfirmationDialog DialogFragment -- not compatible with PreferenceActivity
-                                    MaterialDialog(this@DeckOptionsActivity).show {
+                                    AlertDialog.Builder(this@DeckOptionsActivity).show {
                                         message(R.string.full_sync_confirmation)
                                         positiveButton(R.string.dialog_ok) {
                                             col.modSchemaNoCheck()
@@ -318,7 +317,7 @@ class DeckOptionsActivity :
                                             for (childDid in children.values) {
                                                 val child = col.decks.get(childDid)
                                                 if (child.isDyn) continue
-                                                changeDeckConfiguration(deck, mOptions, col)
+                                                changeDeckConfiguration(child, mOptions, col)
                                             }
                                         }
                                     } finally {
@@ -347,7 +346,8 @@ class DeckOptionsActivity :
                                     applicationContext,
                                     mOptions.getLong("id").toInt(),
                                     Intent(applicationContext, ReminderService::class.java).putExtra(
-                                        ReminderService.EXTRA_DECK_OPTION_ID, mOptions.getLong("id")
+                                        ReminderService.EXTRA_DECK_OPTION_ID,
+                                        mOptions.getLong("id")
                                     ),
                                     0
                                 )
@@ -454,36 +454,10 @@ class DeckOptionsActivity :
                 }
                 deck.put("conf", 1)
             }
-
-            private fun confChangeHandler(): ConfChangeHandler {
-                return ConfChangeHandler(this@DeckPreferenceHack)
-            }
         }
 
         override fun edit(): Editor {
             return Editor()
-        }
-    }
-
-    class ConfChangeHandler(deckPreferenceHack: DeckPreferenceHack) :
-        TaskListenerWithContext<DeckPreferenceHack, Void?, Boolean?>(deckPreferenceHack) {
-
-        override fun actualOnPreExecute(context: DeckPreferenceHack) = context.preConfChange()
-
-        override fun actualOnPostExecute(context: DeckPreferenceHack, result: Boolean?) = context.postConfChange()
-    }
-
-    @KotlinCleanup("Remove this once DeckOptions is an AnkiActivity")
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        val newNightModeStatus = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-        // Check if theme should change
-        if (Themes.systemIsInNightMode != newNightModeStatus) {
-            Themes.systemIsInNightMode = newNightModeStatus
-            if (themeFollowsSystem()) {
-                updateCurrentTheme()
-                recreate()
-            }
         }
     }
 
@@ -559,9 +533,7 @@ class DeckOptionsActivity :
     }
 
     // TODO Tracked in https://github.com/ankidroid/Anki-Android/issues/5019
-    @KotlinCleanup("remove reduntant val res = resources")
     override fun updateSummaries() {
-        val res = resources
         // for all text preferences, set summary as current database value
         for (key in pref.mValues.keys) {
             val pref = findPreference(key)
@@ -570,7 +542,7 @@ class DeckOptionsActivity :
                 val count = optionsGroupCount
                 // Escape "%" in groupName as it's treated as a token
                 groupName = groupName.replace("%".toRegex(), "%%")
-                pref!!.summary = res.getQuantityString(R.plurals.deck_conf_group_summ, count, groupName, count)
+                pref!!.summary = resources.getQuantityString(R.plurals.deck_conf_group_summ, count, groupName, count)
                 continue
             }
 
@@ -579,8 +551,7 @@ class DeckOptionsActivity :
             } else if (pref is CheckBoxPreference) {
                 continue
             } else if (pref is ListPreference) {
-                val lp = pref
-                if (lp.entry != null) lp.entry.toString() else ""
+                if (pref.entry != null) pref.entry.toString() else ""
             } else {
                 this.pref.getString(key, "")
             }
@@ -597,11 +568,11 @@ class DeckOptionsActivity :
         }
         // Update summaries of preference items that don't have values (aren't in mValues)
         val subDeckCount = subdeckCount
-        findPreference("confSetSubdecks").summary = res.getQuantityString(R.plurals.deck_conf_set_subdecks_summ, subDeckCount, subDeckCount)
+        findPreference("confSetSubdecks").summary = resources.getQuantityString(R.plurals.deck_conf_set_subdecks_summ, subDeckCount, subDeckCount)
     }
 
     // TODO Tracked in https://github.com/ankidroid/Anki-Android/issues/5019
-    protected fun buildLists() {
+    private fun buildLists() {
         val deckConfPref = findPreference("deckConf") as ListPreference
         val confs = col.decks.allConf()
         Collections.sort(confs, NamedJSONComparator.INSTANCE)
@@ -701,7 +672,6 @@ class DeckOptionsActivity :
 
     companion object {
         fun reminderToCalendar(time: Time, reminder: JSONObject): Calendar {
-
             val calendar = time.calendar()
 
             calendar[Calendar.HOUR_OF_DAY] = reminder.getJSONArray("time").getInt(0)

@@ -37,8 +37,8 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
-import com.afollestad.materialdialogs.MaterialDialog
 import com.google.android.material.bottomnavigation.BottomNavigationView
+import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import com.ichi2.anim.ActivityTransitionAnimation.Direction.END
@@ -51,7 +51,9 @@ import com.ichi2.anki.dialogs.DiscardChangesDialog
 import com.ichi2.anki.dialogs.InsertFieldDialog
 import com.ichi2.anki.dialogs.InsertFieldDialog.Companion.REQUEST_FIELD_INSERT
 import com.ichi2.anki.exception.ConfirmModSchemaException
+import com.ichi2.anki.snackbar.showSnackbar
 import com.ichi2.annotations.NeedsTest
+import com.ichi2.compat.CompatHelper.Companion.getSerializableCompat
 import com.ichi2.libanki.*
 import com.ichi2.libanki.Collection
 import com.ichi2.libanki.Models.Companion.NOT_FOUND_NOTE_TYPE
@@ -95,8 +97,6 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
     // ----------------------------------------------------------------------------
     // ANDROID METHODS
     // ----------------------------------------------------------------------------
-    @KotlinCleanup("Unchecked cast")
-    @Suppress("UNCHECKED_CAST", "deprecation") // as HashMap<Int, Int?>?. Deprecation: getSerializable
     override fun onCreate(savedInstanceState: Bundle?) {
         if (showedActivityFailedScreen(savedInstanceState)) {
             return
@@ -123,8 +123,8 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
             mModelId = savedInstanceState.getLong(EDITOR_MODEL_ID)
             mNoteId = savedInstanceState.getLong(EDITOR_NOTE_ID)
             mStartingOrdId = savedInstanceState.getInt(EDITOR_START_ORD_ID)
-            tabToCursorPosition = savedInstanceState.getSerializable(TAB_TO_CURSOR_POSITION_KEY) as HashMap<Int, Int?>
-            tabToViewId = savedInstanceState.getSerializable(TAB_TO_VIEW_ID) as HashMap<Int, Int?>
+            tabToCursorPosition = savedInstanceState.getSerializableCompat<HashMap<Int, Int?>>(TAB_TO_CURSOR_POSITION_KEY)!!
+            tabToViewId = savedInstanceState.getSerializableCompat<HashMap<Int, Int?>>(TAB_TO_VIEW_ID)!!
             tempModel = TemporaryModel.fromBundle(savedInstanceState)
         }
 
@@ -137,7 +137,7 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
 
     public override fun onSaveInstanceState(outState: Bundle) {
         with(outState) {
-            putAll(tempModel!!.toBundle())
+            tempModel?.let { putAll(it.toBundle()) }
             putLong(EDITOR_MODEL_ID, mModelId)
             putLong(EDITOR_NOTE_ID, mNoteId)
             putInt(EDITOR_START_ORD_ID, mStartingOrdId)
@@ -201,24 +201,19 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
         return tempModel != null && tempModel!!.model.toString() != oldModel.toString()
     }
 
-    @VisibleForTesting
-    fun showDiscardChangesDialog(): MaterialDialog {
-        val discardDialog = DiscardChangesDialog.showDialog(this) {
-            Timber.i("TemplateEditor:: OK button pressed to confirm discard changes")
-            // Clear the edited model from any cache files, and clear it from this objects memory to discard changes
-            TemporaryModel.clearTempModelFiles()
-            tempModel = null
-            finishWithAnimation(END)
-        }
-        discardDialog.show()
-        return discardDialog
+    private fun showDiscardChangesDialog() = DiscardChangesDialog.showDialog(this) {
+        Timber.i("TemplateEditor:: OK button pressed to confirm discard changes")
+        // Clear the edited model from any cache files, and clear it from this objects memory to discard changes
+        TemporaryModel.clearTempModelFiles()
+        tempModel = null
+        finishWithAnimation(END)
     }
 
     /** When a deck is selected via Deck Override  */
     override fun onDeckSelected(deck: SelectableDeck?) {
         if (tempModel!!.model.isCloze) {
             Timber.w("Attempted to set deck for cloze model")
-            UIUtils.showThemedToast(this, getString(R.string.multimedia_editor_something_wrong), true)
+            showSnackbar(getString(R.string.multimedia_editor_something_wrong), Snackbar.LENGTH_SHORT)
             return
         }
 
@@ -228,7 +223,7 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
 
         if (deck != null && Decks.isDynamic(col, deck.deckId)) {
             Timber.w("Attempted to set default deck of %s to dynamic deck %s", templateName, deck.name)
-            UIUtils.showThemedToast(this, getString(R.string.multimedia_editor_something_wrong), true)
+            showSnackbar(getString(R.string.multimedia_editor_something_wrong), Snackbar.LENGTH_SHORT)
             return
         }
 
@@ -242,7 +237,7 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
             getString(R.string.model_manager_deck_override_added_message, templateName, deck.name)
         }
 
-        UIUtils.showThemedToast(this, message, true)
+        showSnackbar(message, Snackbar.LENGTH_SHORT)
 
         // Deck Override can change from "on" <-> "off"
         invalidateOptionsMenu()
@@ -584,7 +579,8 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
                         return false
                     }
                 },
-                viewLifecycleOwner, Lifecycle.State.RESUMED
+                viewLifecycleOwner,
+                Lifecycle.State.RESUMED
             )
         }
 
@@ -626,7 +622,7 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
         private fun displayDeckOverrideDialog(col: Collection, tempModel: TemporaryModel) {
             val activity = requireActivity() as AnkiActivity
             if (tempModel.model.isCloze) {
-                UIUtils.showThemedToast(activity, getString(R.string.multimedia_editor_something_wrong), true)
+                showSnackbar(getString(R.string.multimedia_editor_something_wrong), Snackbar.LENGTH_SHORT)
                 return
             }
             val name = getCurrentTemplateName(tempModel)
@@ -688,7 +684,6 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
                 val currentDeletes = tempModel.getDeleteDbOrds(position)
                 // TODO - this is a SQL query on GUI thread - should see a DeckTask conversion ideally
                 if (col.models.getCardIdsForModel(tempModel.modelId, currentDeletes) == null) {
-
                     // It is possible but unlikely that a user has an in-memory template addition that would
                     // generate cards making the deletion safe, but we don't handle that. All users who do
                     // not already have cards generated making it safe will see this error message:
@@ -748,7 +743,8 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
                     R.plurals.card_template_editor_confirm_delete,
                     numAffectedCards
                 ),
-                numAffectedCards, tmpl.optString("name")
+                numAffectedCards,
+                tmpl.optString("name")
             )
             d.setArgs(msg)
 
@@ -918,8 +914,10 @@ open class CardTemplateEditor : AnkiActivity(), DeckSelectionListener {
         private const val EDITOR_NOTE_ID = "noteId"
         private const val EDITOR_START_ORD_ID = "ordId"
         private const val CARD_INDEX = "card_ord"
+
         @Suppress("unused")
         private const val REQUEST_PREVIEWER = 0
+
         @Suppress("unused")
         private const val REQUEST_CARD_BROWSER_APPEARANCE = 1
     }

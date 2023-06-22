@@ -16,6 +16,7 @@
 
 package com.ichi2.libanki
 
+import androidx.annotation.WorkerThread
 import com.ichi2.anki.CrashReportService
 import com.ichi2.anki.exception.ConfirmModSchemaException
 import com.ichi2.utils.Assert
@@ -23,6 +24,7 @@ import net.ankiweb.rsdroid.RustCleanup
 import org.json.JSONObject
 import timber.log.Timber
 
+@WorkerThread
 abstract class ModelManager(protected val col: Collection) {
 
     /*
@@ -36,6 +38,7 @@ abstract class ModelManager(protected val col: Collection) {
     /** Mark M modified if provided, and schedule registry flush. */
     fun save() = save(null)
     fun save(m: Model?) = save(m, false)
+
     /**
      * Save a model
      * @param m model to save
@@ -70,6 +73,7 @@ abstract class ModelManager(protected val col: Collection) {
 
     /** get model with ID, or null.  */
     abstract fun get(id: Long): Model?
+
     /** get all models  */
     abstract fun all(): List<Model>
 
@@ -91,6 +95,7 @@ abstract class ModelManager(protected val col: Collection) {
     abstract fun rem(m: Model)
 
     abstract fun add(m: Model)
+
     /** Add or update an existing model. Used for syncing and merging.  */
     open fun update(m: Model) = update(m, true)
 
@@ -120,6 +125,7 @@ abstract class ModelManager(protected val col: Collection) {
      */
     @RustCleanup("use all_use_counts()")
     abstract fun useCount(m: Model): Int
+
     /**
      * Number of notes using m
      * @param m The model to the count the notes of.
@@ -142,15 +148,19 @@ abstract class ModelManager(protected val col: Collection) {
     abstract fun newField(name: String): JSONObject
 
     abstract fun sortIdx(m: Model): Int
+
     @Throws(ConfirmModSchemaException::class)
     abstract fun setSortIdx(m: Model, idx: Int)
 
     @Throws(ConfirmModSchemaException::class)
     abstract fun addField(m: Model, field: JSONObject)
+
     @Throws(ConfirmModSchemaException::class)
     abstract fun remField(m: Model, field: JSONObject)
+
     @Throws(ConfirmModSchemaException::class)
     abstract fun moveField(m: Model, field: JSONObject, idx: Int)
+
     @Throws(ConfirmModSchemaException::class)
     abstract fun renameField(m: Model, field: JSONObject, newName: String)
 
@@ -160,6 +170,7 @@ abstract class ModelManager(protected val col: Collection) {
 
     @Throws(ConfirmModSchemaException::class)
     abstract fun addTemplate(m: Model, template: JSONObject)
+
     /**
      * Removing a template
      *
@@ -314,6 +325,7 @@ abstract class ModelManager(protected val col: Collection) {
 
     /** Add template without schema mod */
     protected abstract fun _addTemplate(m: Model, template: JSONObject)
+
     /** Add field without schema mod */
     protected abstract fun _addField(m: Model, field: JSONObject)
 

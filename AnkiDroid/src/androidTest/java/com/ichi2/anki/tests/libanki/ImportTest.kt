@@ -15,12 +15,11 @@
  ****************************************************************************************/
 package com.ichi2.anki.tests.libanki
 
-import android.Manifest
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.GrantPermissionRule
 import com.ichi2.anki.exception.ImportExportException
 import com.ichi2.anki.tests.InstrumentedTest
 import com.ichi2.anki.tests.Shared
+import com.ichi2.anki.testutil.GrantStoragePermission
 import com.ichi2.libanki.Collection
 import com.ichi2.libanki.importer.Anki2Importer
 import com.ichi2.libanki.importer.AnkiPackageImporter
@@ -45,8 +44,7 @@ class ImportTest : InstrumentedTest() {
     private lateinit var testCol: Collection
 
     @get:Rule
-    var runtimePermissionRule: GrantPermissionRule? =
-        GrantPermissionRule.grant(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+    var runtimePermissionRule = GrantStoragePermission.instance
 
     // testAnki2Mediadupes() failed on Travis API=22 EMU_FLAVOR=default ABI=armeabi-v7a
     // com.ichi2.anki.tests.libanki.ImportTest > testAnki2Mediadupes[test(AVD) - 5.1.1] FAILED
@@ -61,6 +59,7 @@ class ImportTest : InstrumentedTest() {
     // Allowing it to re-run now, 3 times, in case it flakes again.
     @get:Rule
     var retry = RetryRule(10)
+
     @Before
     @Throws(IOException::class)
     fun setUp() {
@@ -77,7 +76,6 @@ class ImportTest : InstrumentedTest() {
     @Test
     @Throws(IOException::class, JSONException::class, ImportExportException::class)
     fun testAnki2Mediadupes() {
-
         // add a note that references a sound
         var n = testCol.newNote()
         n.setField(0, "[sound:foo.mp3]")
@@ -97,7 +95,7 @@ class ImportTest : InstrumentedTest() {
         actual.retainAll(expected)
         assertEquals(expected.size.toLong(), actual.size.toLong())
         // and importing again will not duplicate, as the file content matches
-        empty.remCards(empty.db.queryLongList("select id from cards"))
+        empty.removeCardsAndOrphanedNotes(empty.db.queryLongList("select id from cards"))
         imp = Anki2Importer(empty, testCol.path)
         imp.run()
         expected = listOf("foo.mp3")
@@ -107,7 +105,7 @@ class ImportTest : InstrumentedTest() {
         n = empty.getNote(empty.db.queryLongScalar("select id from notes"))
         assertTrue("foo.mp3" in n.fields[0])
         // if the local file content is different, and import should trigger a rename
-        empty.remCards(empty.db.queryLongList("select id from cards"))
+        empty.removeCardsAndOrphanedNotes(empty.db.queryLongList("select id from cards"))
         os = FileOutputStream(File(empty.media.dir(), "foo.mp3"), false)
         os.write("bar".toByteArray())
         os.close()
@@ -120,7 +118,7 @@ class ImportTest : InstrumentedTest() {
         n = empty.getNote(empty.db.queryLongScalar("select id from notes"))
         assertTrue(n.fields[0].contains("_"))
         // if the localized media file already exists, we rewrite the note and media
-        empty.remCards(empty.db.queryLongList("select id from cards"))
+        empty.removeCardsAndOrphanedNotes(empty.db.queryLongList("select id from cards"))
         os = FileOutputStream(File(empty.media.dir(), "foo.mp3"))
         os.write("bar".toByteArray())
         os.close()
@@ -154,7 +152,7 @@ class ImportTest : InstrumentedTest() {
         actual.retainAll(expected)
         assertEquals(expected.size.toLong(), actual.size.toLong())
         // import again should be idempotent in terms of media
-        testCol.remCards(testCol.db.queryLongList("select id from cards"))
+        testCol.removeCardsAndOrphanedNotes(testCol.db.queryLongList("select id from cards"))
         imp = AnkiPackageImporter(testCol, apkg)
         imp.run()
         expected = listOf("foo.wav")
@@ -162,7 +160,7 @@ class ImportTest : InstrumentedTest() {
         actual.retainAll(expected)
         assertEquals(expected.size.toLong(), actual.size.toLong())
         // but if the local file has different data, it will rename
-        testCol.remCards(testCol.db.queryLongList("select id from cards"))
+        testCol.removeCardsAndOrphanedNotes(testCol.db.queryLongList("select id from cards"))
         val os = FileOutputStream(File(testCol.media.dir(), "foo.wav"), false)
         os.write("xyz".toByteArray())
         os.close()

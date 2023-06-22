@@ -16,13 +16,18 @@
 package com.ichi2.anki.preferences
 
 import android.content.Context
+import androidx.appcompat.app.AlertDialog
 import androidx.preference.Preference
 import androidx.preference.SwitchPreference
-import com.afollestad.materialdialogs.MaterialDialog
 import com.ichi2.anki.*
 import com.ichi2.anki.analytics.UsageAnalytics
 import com.ichi2.anki.snackbar.showSnackbar
+import com.ichi2.preferences.IncrementerNumberRangePreferenceCompat
+import com.ichi2.utils.show
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.io.File
 
 /**
  * Fragment exclusive to DEBUG builds which can be used
@@ -51,12 +56,12 @@ class DevOptionsFragment : SettingsFragment() {
             }
         }
         // Make it possible to test crash reporting
-        requirePreference<Preference>(getString(R.string.pref_trigger_crash_key)).setOnPreferenceClickListener {
+        requirePreference<Preference>(R.string.pref_trigger_crash_key).setOnPreferenceClickListener {
             Timber.w("Crash triggered on purpose from advanced preferences in debug mode")
             throw RuntimeException("This is a test crash")
         }
         // Make it possible to test analytics
-        requirePreference<Preference>(getString(R.string.pref_analytics_debug_key)).setOnPreferenceClickListener {
+        requirePreference<Preference>(R.string.pref_analytics_debug_key).setOnPreferenceClickListener {
             if (UsageAnalytics.isEnabled) {
                 showSnackbar("Analytics set to dev mode")
             } else {
@@ -66,24 +71,58 @@ class DevOptionsFragment : SettingsFragment() {
             true
         }
         // Lock database
-        requirePreference<Preference>(getString(R.string.pref_lock_database_key)).setOnPreferenceClickListener {
+        requirePreference<Preference>(R.string.pref_lock_database_key).setOnPreferenceClickListener {
             val c = CollectionHelper.instance.getCol(requireContext())!!
             Timber.w("Toggling database lock")
             c.db.database.beginTransaction()
             true
         }
         // Reset onboarding
-        requirePreference<Preference>(getString(R.string.pref_reset_onboarding_key)).setOnPreferenceClickListener {
+        requirePreference<Preference>(R.string.pref_reset_onboarding_key).setOnPreferenceClickListener {
             OnboardingUtils.reset(requireContext())
             true
         }
-        // Use scoped storage
-        requirePreference<Preference>(getString(R.string.pref_scoped_storage_key)).apply {
-            setDefaultValue(AnkiDroidApp.TESTING_SCOPED_STORAGE)
-            setOnPreferenceClickListener {
-                AnkiDroidApp.TESTING_SCOPED_STORAGE = true
-                (requireActivity() as Preferences).restartWithNewDeckPicker()
-                true
+
+        val sizePreference = requirePreference<IncrementerNumberRangePreferenceCompat>(getString(R.string.pref_fill_collection_size_file_key))
+        val numberOfFilePreference = requirePreference<IncrementerNumberRangePreferenceCompat>(getString(R.string.pref_fill_collection_number_file_key))
+
+        /*
+         * Create fake media section
+         */
+        requirePreference<Preference>(R.string.pref_fill_collection_key).setOnPreferenceClickListener {
+            val sizeOfFiles = sizePreference.getValue()
+            val numberOfFiles = numberOfFilePreference.getValue()
+            AlertDialog.Builder(requireContext()).show {
+                setTitle("Warning!")
+                setMessage("You'll add $numberOfFiles files with no meaningful content, potentially overriding existing files. Do not do it on a collection you care about.")
+                setPositiveButton("OK") { _, _ ->
+                    generateFiles(sizeOfFiles, numberOfFiles)
+                }
+                setNegativeButton(R.string.dialog_cancel) { _, _ -> }
+            }
+            true
+        }
+    }
+
+    private fun generateFiles(size: Int, numberOfFiles: Int) {
+        Timber.d("numberOf files: $numberOfFiles, size: $size")
+        launchCatchingTask {
+            withProgress("Generating $numberOfFiles files of size $size bytes") {
+                val suffix = ".$size"
+                for (i in 1..numberOfFiles) {
+                    val f = withContext(Dispatchers.IO) {
+                        File.createTempFile("00$i", suffix)
+                    }
+                    f.appendBytes(ByteArray(size))
+
+                    CollectionManager.withCol {
+                        media.addFile(f)
+                    }
+                    if (i % 1000 == 0) {
+                        UIUtils.showThemedToast(requireContext(), "$i files added.", true)
+                    }
+                }
+                UIUtils.showThemedToast(requireContext(), "$numberOfFiles files added successfully", false)
             }
         }
     }
@@ -92,12 +131,12 @@ class DevOptionsFragment : SettingsFragment() {
      * Shows dialog to confirm if developer options should be disabled
      */
     private fun showDisableDevOptionsDialog() {
-        MaterialDialog(requireContext()).show {
-            title(R.string.disable_dev_options)
-            positiveButton(R.string.dialog_ok) {
+        AlertDialog.Builder(requireContext()).show {
+            setTitle(R.string.disable_dev_options)
+            setPositiveButton(R.string.dialog_ok) { _, _ ->
                 disableDevOptions()
             }
-            negativeButton(R.string.dialog_cancel)
+            setNegativeButton(R.string.dialog_cancel) { _, _ -> }
         }
     }
 

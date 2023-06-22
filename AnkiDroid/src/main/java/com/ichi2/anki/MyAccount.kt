@@ -50,6 +50,7 @@ open class MyAccount : AnkiActivity() {
     private lateinit var mUsername: EditText
     private lateinit var mPassword: TextInputEditField
     private lateinit var mUsernameLoggedIn: TextView
+
     @Suppress("Deprecation")
     private var mProgressDialog: android.app.ProgressDialog? = null
     var toolbar: Toolbar? = null
@@ -116,7 +117,8 @@ open class MyAccount : AnkiActivity() {
                 mLoginListener,
                 Connection.Payload(
                     arrayOf(
-                        username, password,
+                        username,
+                        password,
                         getInstance(this)
                     )
                 )
@@ -155,7 +157,8 @@ open class MyAccount : AnkiActivity() {
                 mLoginListener,
                 Connection.Payload(
                     arrayOf(
-                        username, password,
+                        username,
+                        password,
                         getInstance(this)
                     )
                 )
@@ -164,15 +167,11 @@ open class MyAccount : AnkiActivity() {
     }
 
     private fun logout() {
-        val preferences = AnkiDroidApp.getSharedPrefs(baseContext)
-        preferences.edit {
-            putString("username", "")
-            putString("hkey", "")
+        launchCatchingTask {
+            syncLogout(baseContext)
+            getInstance(this@MyAccount).reset()
+            switchToState(STATE_LOG_IN)
         }
-        getInstance(this).reset()
-        //  force media resync on deauth
-        col.media.forceResync()
-        switchToState(STATE_LOG_IN)
     }
 
     private fun resetPassword() {
@@ -218,6 +217,9 @@ open class MyAccount : AnkiActivity() {
         mLoggedIntoMyAccountView = layoutInflater.inflate(R.layout.my_account_logged_in, null)
         mUsernameLoggedIn = mLoggedIntoMyAccountView.findViewById(R.id.username_logged_in)
         val logoutButton = mLoggedIntoMyAccountView.findViewById<Button>(R.id.logout_button)
+        mLoggedIntoMyAccountView.let {
+            mAnkidroidLogo = it.findViewById(R.id.ankidroid_logo)
+        }
         logoutButton.setOnClickListener { logout() }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             mPassword.setAutoFillListener {
@@ -262,8 +264,10 @@ open class MyAccount : AnkiActivity() {
             Timber.d("loginListener.onPreExecute()")
             if (mProgressDialog == null || !mProgressDialog!!.isShowing) {
                 mProgressDialog = StyledProgressDialog.show(
-                    this@MyAccount, null,
-                    resources.getString(R.string.alert_logging_message), false
+                    this@MyAccount,
+                    null,
+                    resources.getString(R.string.alert_logging_message),
+                    false
                 )
             }
         }

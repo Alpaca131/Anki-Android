@@ -21,25 +21,19 @@ import androidx.core.content.edit
 import anki.sync.SyncAuth
 import anki.sync.SyncStatusResponse
 import com.ichi2.anki.AnkiDroidApp
-import com.ichi2.anki.servicelayer.ScopedStorageService.userMigrationIsInProgress
+import com.ichi2.anki.SyncPreferences
 import com.ichi2.libanki.Collection
 import net.ankiweb.rsdroid.BackendFactory
 
+// TODO Remove BADGE_DISABLED from this enum, it doesn't belong here
 enum class SyncStatus {
-    INCONCLUSIVE, NO_ACCOUNT, NO_CHANGES, HAS_CHANGES, FULL_SYNC, BADGE_DISABLED,
-    /**
-     * Scope storage migration is ongoing. Sync should be disabled.
-     */
-    ONGOING_MIGRATION;
+    NO_ACCOUNT, NO_CHANGES, HAS_CHANGES, FULL_SYNC, BADGE_DISABLED;
 
     companion object {
         private var sPauseCheckingDatabase = false
         private var sMarkedInMemory = false
 
         fun getSyncStatus(col: Collection, context: Context, auth: SyncAuth?): SyncStatus {
-            if (userMigrationIsInProgress(context)) {
-                return ONGOING_MIGRATION
-            }
             if (isDisabled) {
                 return BADGE_DISABLED
             }
@@ -47,7 +41,13 @@ enum class SyncStatus {
                 return NO_ACCOUNT
             }
             if (!BackendFactory.defaultLegacySchema) {
-                return syncStatusFromRequired(col.newBackend.backend.syncStatus(auth).required)
+                val output = col.newBackend.backend.syncStatus(auth)
+                if (output.hasNewEndpoint()) {
+                    AnkiDroidApp.getSharedPrefs(context).edit {
+                        putString(SyncPreferences.CURRENT_SYNC_URI, output.newEndpoint)
+                    }
+                }
+                return syncStatusFromRequired(output.required)
             }
             if (col.schemaChanged()) {
                 return FULL_SYNC

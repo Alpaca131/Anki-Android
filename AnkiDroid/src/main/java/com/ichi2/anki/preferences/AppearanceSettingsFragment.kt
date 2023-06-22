@@ -21,16 +21,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.SwitchPreference
-import com.ichi2.anki.AnkiDroidApp
-import com.ichi2.anki.CollectionHelper
-import com.ichi2.anki.R
-import com.ichi2.anki.UIUtils
-import com.ichi2.anki.cardviewer.GestureProcessor
-import com.ichi2.anki.reviewer.FullScreenMode
+import com.ichi2.anki.*
+import com.ichi2.anki.CollectionManager.withCol
 import com.ichi2.anki.snackbar.showSnackbar
 import com.ichi2.libanki.Utils
 import com.ichi2.themes.Theme
 import com.ichi2.themes.Themes
+import com.ichi2.themes.Themes.systemIsInNightMode
+import com.ichi2.themes.Themes.updateCurrentTheme
 import timber.log.Timber
 import java.io.File
 import java.io.FileInputStream
@@ -44,30 +42,6 @@ class AppearanceSettingsFragment : SettingsFragment() {
         get() = "prefs.appearance"
 
     override fun initSubscreen() {
-        val col = col!!
-        // Show error toast if the user tries to disable answer button without gestures on
-        requirePreference<Preference>(R.string.answer_buttons_position_preference).setOnPreferenceChangeListener() { _, newValue: Any ->
-            val prefs = AnkiDroidApp.getSharedPrefs(requireContext())
-            if (prefs.getBoolean(GestureProcessor.PREF_KEY, false) || newValue != "none") {
-                true
-            } else {
-                // TODO add a button on the snackbar that leads directly to the
-                // Controls fragment and highlight the gesture preference
-                showSnackbar(R.string.full_screen_error_gestures)
-                false
-            }
-        }
-        requirePreference<ListPreference>(FullScreenMode.PREF_KEY).setOnPreferenceChangeListener { _, newValue: Any ->
-            val prefs = AnkiDroidApp.getSharedPrefs(requireContext())
-            if (prefs.getBoolean(GestureProcessor.PREF_KEY, false) || FullScreenMode.FULLSCREEN_ALL_GONE.getPreferenceValue() != newValue) {
-                true
-            } else {
-                // TODO add a button on the snackbar that leads directly to the
-                // Controls fragment and highlight the gesture preference
-                showSnackbar(R.string.full_screen_error_gestures)
-                false
-            }
-        }
         // Configure background
         mBackgroundImage = requirePreference<SwitchPreference>("deckPickerBackground")
         mBackgroundImage!!.onPreferenceClickListener = Preference.OnPreferenceClickListener {
@@ -95,9 +69,9 @@ class AppearanceSettingsFragment : SettingsFragment() {
             true
         }
 
-        val appThemePref = requirePreference<ListPreference>(getString(R.string.app_theme_key))
-        val dayThemePref = requirePreference<ListPreference>(getString(R.string.day_theme_key))
-        val nightThemePref = requirePreference<ListPreference>(getString(R.string.night_theme_key))
+        val appThemePref = requirePreference<ListPreference>(R.string.app_theme_key)
+        val dayThemePref = requirePreference<ListPreference>(R.string.day_theme_key)
+        val nightThemePref = requirePreference<ListPreference>(R.string.night_theme_key)
         val themeIsFollowSystem = appThemePref.value == Themes.FOLLOW_SYSTEM_MODE
 
         // Remove follow system options in android versions which do not have system dark mode
@@ -125,7 +99,7 @@ class AppearanceSettingsFragment : SettingsFragment() {
             if (newValue != appThemePref.value) {
                 val previousThemeId = Themes.currentTheme.id
                 appThemePref.value = newValue.toString()
-                Themes.updateCurrentTheme()
+                updateCurrentTheme(requireContext())
 
                 if (previousThemeId != Themes.currentTheme.id) {
                     requireActivity().recreate()
@@ -134,17 +108,13 @@ class AppearanceSettingsFragment : SettingsFragment() {
         }
 
         dayThemePref.setOnPreferenceChangeListener { newValue ->
-            if (newValue != dayThemePref.value && !Themes.systemIsInNightMode && newValue != Themes.currentTheme.id) {
-                dayThemePref.value = newValue.toString()
-                Themes.updateCurrentTheme()
+            if (newValue != dayThemePref.value && !systemIsInNightMode(requireContext()) && newValue != Themes.currentTheme.id) {
                 requireActivity().recreate()
             }
         }
 
         nightThemePref.setOnPreferenceChangeListener { newValue ->
-            if (newValue != nightThemePref.value && Themes.systemIsInNightMode && newValue != Themes.currentTheme.id) {
-                nightThemePref.value = newValue.toString()
-                Themes.updateCurrentTheme()
+            if (newValue != nightThemePref.value && systemIsInNightMode(requireContext()) && newValue != Themes.currentTheme.id) {
                 requireActivity().recreate()
             }
         }
@@ -164,18 +134,18 @@ class AppearanceSettingsFragment : SettingsFragment() {
         // Represents the collection pref "estTime": i.e.
         // whether the buttons should indicate the duration of the interval if we click on them.
         requirePreference<SwitchPreference>(R.string.show_estimates_preference).apply {
-            isChecked = col.get_config_boolean("estTimes")
-            setOnPreferenceChangeListener { newValue ->
-                col.set_config("estTimes", newValue)
+            launchCatchingTask { isChecked = withCol { get_config_boolean("estTimes") } }
+            setOnPreferenceChangeListener { newETA ->
+                launchCatchingTask { withCol { set_config("estTimes", newETA) } }
             }
         }
         // Show progress
         // Represents the collection pref "dueCounts": i.e.
         // whether the remaining number of cards should be shown.
         requirePreference<SwitchPreference>(R.string.show_progress_preference).apply {
-            isChecked = col.get_config_boolean("dueCounts")
-            setOnPreferenceChangeListener { newValue ->
-                col.set_config("dueCounts", newValue)
+            launchCatchingTask { isChecked = withCol { get_config_boolean("dueCounts") } }
+            setOnPreferenceChangeListener { newDueCountsValue ->
+                launchCatchingTask { withCol { set_config("dueCounts", newDueCountsValue) } }
             }
         }
     }

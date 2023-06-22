@@ -23,6 +23,7 @@ import android.graphics.Typeface
 import android.text.SpannableStringBuilder
 import android.text.style.StyleSpan
 import androidx.annotation.VisibleForTesting
+import androidx.annotation.WorkerThread
 import anki.ankidroid.schedTimingTodayLegacyRequest
 import anki.decks.DeckTreeNode
 import anki.scheduler.*
@@ -45,6 +46,8 @@ import net.ankiweb.rsdroid.RustCleanup
  * BackendFactory.defaultLegacySchema is false, so for now, SchedV2
  * will need to (conditionally) override them.
  */
+
+@WorkerThread
 abstract class BaseSched(val col: Collection) {
     /** Update a V1 scheduler collection to V2. Requires full sync. */
     fun upgradeToV2() {
@@ -95,7 +98,7 @@ abstract class BaseSched(val col: Collection) {
         col.newBackend.backend.buryOrSuspendCards(
             cardIds = cids.toList(),
             noteIds = listOf(),
-            mode = mode,
+            mode = mode
         )
     }
 
@@ -254,7 +257,7 @@ abstract class BaseSched(val col: Collection) {
         col.newBackend.backend.extendLimits(
             deckId = col.decks.selected(),
             newDelta = newc,
-            reviewDelta = rev,
+            reviewDelta = rev
         )
     }
 
@@ -475,7 +478,8 @@ abstract class BaseSched(val col: Collection) {
     fun totalRevForCurrentDeck(): Int {
         return col.db.queryScalar(
             "SELECT count() FROM cards WHERE id IN (SELECT id FROM cards WHERE did IN " + _deckLimit() + "  AND queue = " + Consts.QUEUE_TYPE_REV + " AND due <= ? LIMIT ?)",
-            today, REPORT_LIMIT
+            today,
+            REPORT_LIMIT
         )
     }
 

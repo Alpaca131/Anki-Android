@@ -21,18 +21,18 @@ import android.content.Context
 import android.view.WindowManager
 import android.view.WindowManager.BadTokenException
 import androidx.annotation.StringRes
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.coroutineScope
 import anki.collection.Progress
-import com.afollestad.materialdialogs.MaterialDialog
-import com.afollestad.materialdialogs.callbacks.onCancel
-import com.afollestad.materialdialogs.callbacks.onDismiss
 import com.ichi2.anki.CollectionManager.TR
 import com.ichi2.anki.CollectionManager.withCol
 import com.ichi2.anki.snackbar.showSnackbar
 import com.ichi2.libanki.Collection
+import com.ichi2.utils.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import net.ankiweb.rsdroid.Backend
 import net.ankiweb.rsdroid.BackendException
 import net.ankiweb.rsdroid.exceptions.BackendInterruptedException
@@ -142,11 +142,11 @@ fun Fragment.launchCatchingTask(
 
 private fun showError(context: Context, msg: String, exception: Throwable) {
     try {
-        MaterialDialog(context).show {
+        AlertDialog.Builder(context).show {
             title(R.string.vague_error)
             message(text = msg)
             positiveButton(R.string.dialog_ok)
-            onDismiss {
+            setOnDismissListener {
                 CrashReportService.sendExceptionReport(
                     exception,
                     origin = context::class.java.simpleName
@@ -166,7 +166,7 @@ private fun showError(context: Context, msg: String, exception: Throwable) {
 suspend fun <T> Backend.withProgress(
     extractProgress: ProgressContext.() -> Unit,
     updateUi: ProgressContext.() -> Unit,
-    block: suspend CoroutineScope.() -> T,
+    block: suspend CoroutineScope.() -> T
 ): T {
     return coroutineScope {
         val monitor = launch {
@@ -242,7 +242,7 @@ suspend fun <T> Fragment.withProgress(@StringRes messageId: Int, block: suspend 
     requireActivity().withProgress(messageId, block)
 
 @Suppress("Deprecation") // ProgressDialog deprecation
-private suspend fun <T> withProgressDialog(
+suspend fun <T> withProgressDialog(
     context: Activity,
     onCancel: (() -> Unit)?,
     op: suspend (android.app.ProgressDialog) -> T
@@ -278,7 +278,7 @@ private suspend fun <T> withProgressDialog(
 private suspend fun monitorProgress(
     backend: Backend,
     extractProgress: ProgressContext.() -> Unit,
-    updateUi: ProgressContext.() -> Unit,
+    updateUi: ProgressContext.() -> Unit
 ) {
     val state = ProgressContext(Progress.getDefaultInstance())
     while (true) {
@@ -299,7 +299,7 @@ data class ProgressContext(
     var progress: Progress,
     var text: String = "",
     /** If set, shows progress bar with a of b complete. */
-    var amount: Pair<Int, Int>? = null,
+    var amount: Pair<Int, Int>? = null
 )
 
 @Suppress("Deprecation") // ProgressDialog deprecation
@@ -325,14 +325,14 @@ suspend fun AnkiActivity.userAcceptsSchemaChange(col: Collection): Boolean {
         return true
     }
     return suspendCoroutine { coroutine ->
-        MaterialDialog(this).show {
+        AlertDialog.Builder(this).show {
             message(text = col.tr.deckConfigWillRequireFullSync()) // generic message
             positiveButton(R.string.dialog_ok) {
                 col.modSchemaNoCheck()
                 coroutine.resume(true)
             }
             negativeButton(R.string.dialog_cancel) { coroutine.resume(false) }
-            onCancel { coroutine.resume(false) }
+            setOnCancelListener { coroutine.resume(false) }
         }
     }
 }
@@ -342,15 +342,34 @@ suspend fun AnkiActivity.userAcceptsSchemaChange(): Boolean {
         return true
     }
     val hasAcceptedSchemaChange = suspendCoroutine { coroutine ->
-        MaterialDialog(this).show {
-            message(text = TR.deckConfigWillRequireFullSync())
+        AlertDialog.Builder(this).show {
+            message(text = TR.deckConfigWillRequireFullSync().replace("\\s+".toRegex(), " "))
             positiveButton(R.string.dialog_ok) { coroutine.resume(true) }
             negativeButton(R.string.dialog_cancel) { coroutine.resume(false) }
-            onCancel { coroutine.resume(false) }
+            setOnCancelListener { coroutine.resume(false) }
         }
     }
     if (hasAcceptedSchemaChange) {
         withCol { modSchemaNoCheck() }
     }
     return hasAcceptedSchemaChange
+}
+
+/**
+ * Create a [Channel] and provide it to the supplied action. There is no need to close the channel,
+ * it will be automatically closed on exceptions in the supplied action or when the function
+ * finishes normally.
+ *
+ * This is used as an alternative to the deprecated ProgressCallback class to enable communication
+ * between the (coroutines) background tasks and the UI(mainly for progress updates).
+ *
+ * @param action the action to run with the provided [Channel] as a parameter
+ */
+suspend fun<T, R> withChannel(action: suspend (Channel<T>) -> R): R {
+    val channel = Channel<T>()
+    return try {
+        action(channel)
+    } finally {
+        channel.close()
+    }
 }

@@ -17,21 +17,23 @@
 package com.ichi2.anki
 
 import android.content.Context
+import android.database.sqlite.SQLiteFullException
 import android.os.Environment
 import android.text.format.Formatter
 import androidx.annotation.CheckResult
 import androidx.annotation.VisibleForTesting
+import androidx.core.content.edit
+import com.ichi2.anki.AnkiDroidFolder.AppPrivateFolder
 import com.ichi2.anki.exception.StorageAccessException
 import com.ichi2.anki.preferences.Preferences
 import com.ichi2.libanki.Collection
 import com.ichi2.libanki.Storage
 import com.ichi2.libanki.exception.UnknownDatabaseVersionException
-import com.ichi2.preferences.PreferenceExtensions
+import com.ichi2.preferences.getOrSetString
 import com.ichi2.utils.FileUtil
 import com.ichi2.utils.KotlinCleanup
 import net.ankiweb.rsdroid.BackendException.BackendDbException.BackendDbFileTooNewException
 import net.ankiweb.rsdroid.BackendException.BackendDbException.BackendDbLockedException
-import net.ankiweb.rsdroid.BackendFactory
 import timber.log.Timber
 import java.io.File
 import java.io.IOException
@@ -66,24 +68,6 @@ open class CollectionHelper {
     }
 
     /**
-     * Opens the collection without checking to see if the directory exists.
-     *
-     * path should be tested with File.exists() and File.canWrite() before this is called
-     */
-    private fun openCollection(context: Context, path: String): Collection {
-        Timber.i("Begin openCollection: %s", path)
-        val backend = BackendFactory.getBackend(context)
-        val collection = Storage.collection(
-            context, path,
-            server = false,
-            log = true,
-            backend = backend
-        )
-        Timber.i("End openCollection: %s", path)
-        return collection
-    }
-
-    /**
      * Get the single instance of the [Collection], creating it if necessary  (lazy initialization).
      * @param context is no longer used, as the global AnkidroidApp instance is used instead
      * @return instance of the Collection
@@ -91,29 +75,6 @@ open class CollectionHelper {
     @Synchronized
     open fun getCol(context: Context?): Collection? {
         return CollectionManager.getColUnsafe()
-    }
-
-    /**
-     * Given a path to a .anki2 file returns an open [Collection] associated with the path.
-     *
-     * This operation does not call [initializeAnkiDroidDirectory] and does not set [CollectionManager.collection]
-     *
-     * @param path The path to collection.anki2
-     * @return An open [Collection] object
-     *
-     * @throws StorageAccessException the file at `path` is not writable
-     * @throws StorageAccessException `path` does not exist
-     */
-    @Throws(StorageAccessException::class)
-    fun getColFromPath(path: String, context: Context): Collection {
-        val f = File(path)
-        if (!f.exists()) {
-            throw StorageAccessException("$path does not exist")
-        }
-        if (!f.canWrite()) {
-            throw StorageAccessException("$path is not writable")
-        }
-        return openCollection(context, path)
     }
 
     /**
@@ -135,6 +96,10 @@ open class CollectionHelper {
             null
         } catch (e: BackendDbFileTooNewException) {
             lastOpenFailure = CollectionOpenFailure.FILE_TOO_NEW
+            Timber.w(e)
+            null
+        } catch (e: SQLiteFullException) {
+            lastOpenFailure = CollectionOpenFailure.DISK_FULL
             Timber.w(e)
             null
         } catch (e: Exception) {
@@ -218,13 +183,15 @@ open class CollectionHelper {
             }
             val required = Formatter.formatShortFileSize(context, mRequiredSpace)
             val insufficientSpace = context.resources.getString(
-                R.string.integrity_check_insufficient_space, required
+                R.string.integrity_check_insufficient_space,
+                required
             )
 
             // Also concat in the extra content showing the current free space.
             val currentFree = Formatter.formatShortFileSize(context, mFreeSpace)
             val insufficientSpaceCurrentFree = context.resources.getString(
-                R.string.integrity_check_insufficient_space_extra_content, currentFree
+                R.string.integrity_check_insufficient_space_extra_content,
+                currentFree
             )
             return insufficientSpace + insufficientSpaceCurrentFree
         }
@@ -277,7 +244,7 @@ open class CollectionHelper {
     }
 
     enum class CollectionOpenFailure {
-        FILE_TOO_NEW, CORRUPT, LOCKED
+        FILE_TOO_NEW, CORRUPT, LOCKED, DISK_FULL
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.NONE)
@@ -452,9 +419,12 @@ open class CollectionHelper {
         // TODO Tracked in https://github.com/ankidroid/Anki-Android/issues/5304
         @CheckResult
         fun getDefaultAnkiDroidDirectory(context: Context): String {
-            return if (AnkiDroidApp.TESTING_SCOPED_STORAGE) {
-                getAppSpecificExternalAnkiDroidDirectory(context)
-            } else legacyAnkiDroidDirectory
+            val legacyStorage = StartupStoragePermissionManager.selectAnkiDroidFolder(context) != AppPrivateFolder
+            return if (!legacyStorage) {
+                File(getAppSpecificExternalAnkiDroidDirectory(context), "AnkiDroid").absolutePath
+            } else {
+                legacyAnkiDroidDirectory
+            }
         }
 
         /**
@@ -466,7 +436,7 @@ open class CollectionHelper {
          *
          * @return Absolute path to the AnkiDroid directory in primary shared/external storage
          */
-        private val legacyAnkiDroidDirectory: String
+        val legacyAnkiDroidDirectory: String
             get() = File(Environment.getExternalStorageDirectory(), "AnkiDroid").absolutePath
 
         /**
@@ -494,8 +464,8 @@ open class CollectionHelper {
          * @return Returns an array of [File]s reflecting the directories that AnkiDroid can access without storage permissions
          * @see android.content.Context.getExternalFilesDirs
          */
-        fun getAppSpecificExternalDirectories(context: Context): Array<File> {
-            return context.getExternalFilesDirs(null)
+        fun getAppSpecificExternalDirectories(context: Context): List<File> {
+            return context.getExternalFilesDirs(null).filterNotNull()
         }
 
         /**
@@ -520,6 +490,9 @@ open class CollectionHelper {
             return File(getCurrentAnkiDroidDirectory(context), COLLECTION_FILENAME).absolutePath
         }
 
+        /** A temporary override for [getCurrentAnkiDroidDirectory] */
+        var ankiDroidDirectoryOverride: String? = null
+
         /**
          * @return the absolute path to the AnkiDroid directory.
          */
@@ -528,14 +501,28 @@ open class CollectionHelper {
             return if (AnkiDroidApp.INSTRUMENTATION_TESTING) {
                 // create an "androidTest" directory inside the current collection directory which contains the test data
                 // "/AnkiDroid/androidTest" would be a new collection path
+                val currentCollectionDirectory = preferences.getOrSetString(PREF_COLLECTION_PATH) { getDefaultAnkiDroidDirectory(context) }
                 File(
-                    getDefaultAnkiDroidDirectory(context),
+                    currentCollectionDirectory,
                     "androidTest"
                 ).absolutePath
-            } else PreferenceExtensions.getOrSetString(
-                preferences,
-                PREF_COLLECTION_PATH
-            ) { getDefaultAnkiDroidDirectory(context) }
+            } else if (ankiDroidDirectoryOverride != null) {
+                ankiDroidDirectoryOverride!!
+            } else {
+                preferences.getOrSetString(PREF_COLLECTION_PATH) { getDefaultAnkiDroidDirectory(context) }
+            }
+        }
+
+        /**
+         * Resets the AnkiDroid directory to the [getDefaultAnkiDroidDirectory]
+         * Note: if [android.R.attr.preserveLegacyExternalStorage] is in use
+         * this will represent a change from `/AnkiDroid` to `/Android/data/...`
+         */
+        fun resetAnkiDroidDirectory(context: Context) {
+            val preferences = AnkiDroidApp.getSharedPrefs(context)
+            val directory = getDefaultAnkiDroidDirectory(context)
+            Timber.d("resetting AnkiDroid directory to %s", directory)
+            preferences.edit { putString(PREF_COLLECTION_PATH, directory) }
         }
 
         /** Fetches additional collection data not required for

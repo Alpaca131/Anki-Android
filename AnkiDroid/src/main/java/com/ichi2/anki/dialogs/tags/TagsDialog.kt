@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.text.InputFilter
 import android.text.InputType
 import android.text.Spanned
-import android.text.TextUtils
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
@@ -17,6 +16,7 @@ import android.widget.TextView
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.widget.SearchView
 import androidx.appcompat.widget.Toolbar
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.afollestad.materialdialogs.MaterialDialog
@@ -137,7 +137,8 @@ class TagsDialog : AnalyticsDialogFragment {
             "filled as prefix properly. In other dialog types, long-clicking a tag behaves like a short click."
     )
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        @SuppressLint("InflateParams") val tagsDialogView = LayoutInflater.from(activity).inflate(R.layout.tags_dialog, null, false)
+        @SuppressLint("InflateParams")
+        val tagsDialogView = LayoutInflater.from(activity).inflate(R.layout.tags_dialog, null, false)
         mTagsListRecyclerView = tagsDialogView.findViewById(R.id.tags_dialog_tags_list)
         val tagsListRecyclerView: RecyclerView? = mTagsListRecyclerView
         tagsListRecyclerView?.requestFocus()
@@ -175,7 +176,8 @@ class TagsDialog : AnalyticsDialogFragment {
             .positiveButton(text = mPositiveText!!) {
                 tagsDialogListener.onSelectedTags(
                     mTags!!.copyOfCheckedTagList(),
-                    mTags!!.copyOfIndeterminateTagList(), mSelectedOption
+                    mTags!!.copyOfIndeterminateTagList(),
+                    mSelectedOption
                 )
             }
             .negativeButton(R.string.dialog_cancel)
@@ -191,9 +193,13 @@ class TagsDialog : AnalyticsDialogFragment {
         toolbar.inflateMenu(R.menu.tags_dialog_menu)
 
         val toolbarAddItem = toolbar.menu.findItem(R.id.tags_dialog_action_add)
+        val drawable = ContextCompat.getDrawable(requireContext(), R.drawable.ic_add_white)
+        drawable?.setTint(ContextCompat.getColor(requireContext(), R.color.white))
+        toolbarAddItem.icon = drawable
+
         toolbarAddItem.setOnMenuItemClickListener {
             val query = mToolbarSearchView!!.query.toString()
-            if (mToolbarSearchItem!!.isActionViewExpanded && !TextUtils.isEmpty(query)) {
+            if (mToolbarSearchItem!!.isActionViewExpanded && query.isNotEmpty()) {
                 addTag(query)
                 mToolbarSearchView!!.setQuery("", true)
             } else {
@@ -263,6 +269,7 @@ class TagsDialog : AnalyticsDialogFragment {
             // utilize the addTagFilter to append '::' properly by appending a space to prefixTag
             inputET.setText("$prefixTag ")
         }
+        inputET.setSelection(inputET.text.length)
         addTagDialog.show()
     }
 
